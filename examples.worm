@@ -1,0 +1,19 @@
+#byte a
+#byte a @ 0x400
+#byte a=1
+#byte a[10] @ 0x400
+#byte a=[1,2,3]
+
+#CONST a = b + 1
+#CONST b = 2
+#CONST a = b
+#CONST b = c + 1
+#CONST c = b
+#CONST a = b+1
+#CONST b = a+1
+
+byte color = 0
+while true:
+    color = color + 1
+    poke 0xd020, color
+
