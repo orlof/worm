@@ -10,6 +10,7 @@ reserved_words = {
     "true", "false",
     "not", "and", "or",
     "for", "if", "else", "while", "break", "continue", "return",
+    "asm", 
     "def", "struct",
     "ubyte", "byte", "word", "uword", "long", "ulong", "boolean",
     "switch", "case",
@@ -19,7 +20,7 @@ reserved_words = {
 
 operators_arithmetic = [
     "+", "-", "*", "/", "%", "**",
-    "&", "|", "^", "!", "<<", ">>", ">>>", ">><", "<<>",
+    "!", "&", "|", "^", "~", "<<", ">>", ">>>", ">><", "<<>",
 ]
 
 operators_comparison = [
@@ -85,10 +86,15 @@ class Name:
         return "__NAME__[%s]" % self.value
 
 class Lexer:
-    def __init__(self, text):
-        self.src = self.preprocess(text)
-        self.generator = self._next()
-        self.advance()
+    def __init__(self, filename):
+        self.filename = filename
+
+    def scan(self):
+        with open(self.filename, "r") as f:
+            text = f.read()
+
+        text = self.preprocess(text)
+        return list(self.next(text))
 
     def preprocess(self, text):
         text = text.split("\n")
@@ -105,12 +111,8 @@ class Lexer:
         text = [("START", None)] + text + [("END", None)]
         return text
 
-    def advance(self):
-        self.token, self.value = next(self.generator)
-        # print(self.token, self.value)
-
-    def _next(self):
-        for item in self.src:
+    def next(self, text):
+        for item in text:
             if type(item) == tuple:
                 yield item
                 continue
