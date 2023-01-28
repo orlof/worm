@@ -4,71 +4,7 @@ from lexer import Lexer, operators_arithmetic, operators_comparison
 from nodes import *
 
 
-def type_conv(ast, shared, local):
-    shared = {v.ident: v for v in shared}
-
 class AstNode(Node):
-    def add_type_conversion(self, ):
-        if self.type == "IDENT":
-            self.return_type = self.variables[self.value].type
-
-        elif self.type == "NUMERIC":
-            if 0 <= self.value <= 255:
-                self.return_type = "BYTE"
-            elif 0 <= self.value <= 65535:
-                self.return_type = "WORD"
-            elif -32768 <= self.value <= 32767:
-                self.return_type = "INT"
-            else:
-                self.return_type = "LONG"
-
-        elif self.type == "SUBSCRIPTION":
-            self.left.add_type_conversion()
-            self.right.add_type_conversion()
-            if seself.left.value
-            self.return_type = self.left.return_type
-
-        elif self.type in ("+", "-", "*", "/", "%", "&", "|", "^"):
-            left = self.type_out(self.left)
-            right = self.type_out(self.right)
-            if "LONG" in (left, right):
-                if left != "LONG":
-                    self.left = AstNode(type="CLONG", value=self.left)
-                if right != "LONG":
-                    self.right = AstNode(type="CLONG", value=self.right)
-                return "LONG"
-            if "INT" in (left, right) and "WORD" in (left, right):
-                if left != "LONG":
-                    self.left = AstNode(type="CLONG", value=self.left)
-                if right != "LONG":
-                    self.right = AstNode(type="CLONG", value=self.right)
-                return "LONG"
-            if "WORD" in (left, right):
-                if left != "WORD":
-                    self.left = AstNode(type="CWORD", value=self.left)
-                if right != "WORD":
-                    self.right = AstNode(type="CWORD", value=self.right)
-                return "WORD"
-            if "INT" in (left, right):
-                if left != "INT":
-                    self.left = AstNode(type="CINT", value=self.left)
-                if right != "INT":
-                    self.right = AstNode(type="CINT", value=self.right)
-                return "INT"
-            return "BYTE"
-
-        elif self.type in ("**", "<<", ">>", ">>>", ">><", "<<>"):
-            return self.type_out(self.left)
-
-        elif self.type in ("UMINUS", "UNOT", "NOT"):
-            return self.type_out(self.value)
-
-        elif self.type in operators_comparison:
-            return "BYTE"
-        
-        else:
-            raise NotImplemented()
-
     def type_in(self):
         if self.type == "IDENT":
             return self.variables[self.value].type
@@ -79,9 +15,9 @@ class AstNode(Node):
 
     def optimize_constants(self, constants, used_constants=set()):
         if self.type == "CONST":
-            if self.ident in used_constants:
-                raise SyntaxError("Circular CONST definition: %s" % self.ident)
-            used_constants = set(list(used_constants) + [self.ident])
+            if self.name in used_constants:
+                raise SyntaxError("Circular CONST definition: %s" % self.name)
+            used_constants = set(list(used_constants) + [self.name])
         
         while self.type == "IDENT" and self.value in constants:
             if self.value in used_constants:
@@ -142,22 +78,158 @@ class AstDict(NodeDict):
             if isinstance(v, (AstNode, AstList, AstDict)):
                 v.optimize_constants(constants, used_constants)
 
+def propagate_type(node, names):
+    if isinstance(node, AstList):
+        for n in node:
+            propagate_type(n, names)
+        node.return_type = "???"
+
+    else:
+        for k, v in node.items():
+            if isinstance(v, (AstNode, AstList, AstDict)):
+                propagate_type(v, names)
+
+        if node.type == "IDENT":
+            node.return_type = names[node.value].return_type
+        
+        elif node.type == "NUMERIC":
+            if 0 <= node.value <= 255:
+                node.return_type = "BYTE"
+            elif 0 <= node.value <= 65535:
+                node.return_type = "WORD"
+            elif -32768 <= node.value <= 32767:
+                node.return_type = "INT"
+            else:
+                node.return_type = "LONG"
+
+        elif node.type == "SUBSCRIPTION":
+            node.return_type = propagate_type(node.left, names)
+            node.index_type = propagate_type(node.right, names)
+
+        elif node.type in ("+", "-", "*", "/", "%", "&", "|", "^"):
+            left = propagate_type(node.left, names)
+            right = propagate_type(node.right, names)
+
+            if "LONG" in (left, right):
+                if left != "LONG":
+                    node.left = AstNode(type="CLONG", return_type="LONG", value=node.left)
+                if right != "LONG":
+                    node.right = AstNode(type="CLONG", return_type="LONG", value=node.right)
+                node.return_type = "LONG"
+            elif "INT" in (left, right) and "WORD" in (left, right):
+                if left != "LONG":
+                    node.left = AstNode(type="CLONG", return_type="LONG", value=node.left)
+                if right != "LONG":
+                    node.right = AstNode(type="CLONG", return_type="LONG", value=node.right)
+                node.return_type = "LONG"
+            elif "WORD" in (left, right):
+                if left != "WORD":
+                    node.left = AstNode(type="CWORD", return_type="WOR", value=node.left)
+                if right != "WORD":
+                    node.right = AstNode(type="CWORD", return_type="WORD", value=node.right)
+                node.return_type = "WORD"
+            elif "INT" in (left, right):
+                if left != "INT":
+                    node.left = AstNode(type="CINT", return_type="INT", value=node.left)
+                if right != "INT":
+                    node.right = AstNode(type="CINT", return_type="INT", value=node.right)
+                node.return_type = "INT"
+            else:
+                node.return_type = "BYTE"
+        
+        elif node.type in ("**", "<<", ">>", ">>>", ">><", "<<>"):
+            node.return_type = propagate_type(node.left, names)
+            propagate_type(node.right, names)
+
+        elif node.type in ("UMINUS", "UNOT", "NOT"):
+            node.return_type = propagate_type(node.value, names)
+
+        elif node.type in operators_comparison + ["AND", "OR", "PEEK"]:
+            node.return_type = "BYTE"
+        
+        else:
+            node.return_type = "???"
+
+    return node.return_type
+
+def create_variables(node):
+    for i in node.value:
+        if i.type == "IDENT":
+            yield AstNode(type="DEF_VAR", name=i.value,
+                return_type=node.return_type, 
+                index_type="BYTE",
+                size=1, 
+                initializer=[0]
+            )
+
+        elif i.type == "SUBSCRIPTION":
+            if i.left.type != "IDENT" or i.right.type != "NUMERIC":
+                raise SyntaxError("Syntax error in definition")
+            if not (0 <= i.right.value <= 65535):
+                raise SyntaxError("Out of bounds")
+
+            yield AstNode(type="DEF_VAR", name=i.value, size=i.right.value,
+                return_type=node.return_type, 
+                index_type="BYTE" if i.right.value <= 256 else "WORD", 
+                initializer=[0] * i.right.value
+            )
+
+        elif i.type == "=":
+            if i.left.type != "IDENT":
+                raise SyntaxError("Syntax error in definition")
+
+            if i.right.type == "NUMERIC":
+                if node.return_type == "BYTE" and not (0 <= i.right.value <= 255):
+                    raise SyntaxError("Out of bounds: %s" % (i.name))
+                if node.return_type == "WORD" and not (0 <= i.right.value <= 65535):
+                    raise SyntaxError("Out of bounds: %s" % (i.name))
+
+                yield AstNode(type="DEF_VAR", name=i.left.value,
+                    return_type=node.return_type, 
+                    size=1, 
+                    index_type="BYTE",
+                    initializer=[i.right.value]
+                )
+            elif i.right.type == "LIST":
+                values = [x.value for x in i.right.value]
+                if node.return_type == "BYTE" and not all([0 <= v <= 255 for v in values]):
+                    raise SyntaxError("Out of bounds: %s" % (i.left.value))
+                if node.return_type == "WORD" and not all([0 <= v <= 65535 for v in values]):
+                    raise SyntaxError("Out of bounds: %s" % (i.left.value))
+
+                yield AstNode(type="DEF_VAR", name=i.left.value,
+                    return_type=node.return_type,
+                    size=len(values),
+                    index_type="BYTE" if len(values) <= 256 else "WORD",
+                    initializer=values,
+                )
+            else:
+                raise SyntaxError("Unknown data type %s" % node.type)
+        else:
+            raise SyntaxError("Syntax error in definition")
+
+
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.pos = 0
 
-        self._constants = {}
         self._shared = AstList()
         self._local = [AstList()]
-        self.ast = AstList()
 
-        self.shared = {}
-        self.local = {}
+        self.constants = AstDict()
+
+        self.shared = AstDict()
+        self.local = AstDict()
+        self.ast = AstList()
 
     @property
     def token(self):
         return self.tokens[self.pos][0]
+
+    @property
+    def next_token(self):
+        return self.tokens[self.pos + 1][0]
 
     @property
     def value(self):
@@ -179,12 +251,12 @@ class Parser:
             elif self.token == "CONST":
                 self.advance()
                 if self.token == "IDENT":
-                    ident = self.value
+                    name = self.value
                     self.advance()
                     if self.token != "=":
                         raise SyntaxError("Malformed CONST")
                     self.advance()
-                    self.constants[ident] = AstNode(type="CONST", ident=ident, value=self.expr())
+                    self.constants[name] = AstNode(type="CONST", name=name, value=self.expr())
                 else:
                     raise SyntaxError()
             else:
@@ -194,36 +266,34 @@ class Parser:
         for k, v in self.constants.items():
             v.optimize_constants(self.constants)
 
-        self.locals[0].optimize_constants(self.constants)
+        self._shared.optimize_constants(self.constants)
+        self._local[0].optimize_constants(self.constants)
 
         self.ast.optimize_constants(self.constants)
-        self.globals.optimize_constants(self.constants)
 
-        # COMPILE SHARED NAMES
+        # CONVERT LOCAL AND SHARED LISTS TO DICTS
         for node in self._shared:
             if node.type == "DEF_VAR":
-                for cnode in self.compile_variable(node):
-                    self.shared[cnode.ident] = cnode
+                for var in create_variables(node):
+                    self.shared[var.name] = var
+            elif node.type == "DEF_FUN":
+                for var in create_variables(node._local):
+                    node.local[var.name] = var
+        for node in self._local[0]:
+            for var in create_variables(node):
+                self.local[var.name] = var
 
-            if node.type == "DEF_FUN":
-                self.shared[cnode.ident] = cnode
+        names = self.shared.copy()
+        names.update(self.local)
+        propagate_type(self.ast, names)
 
-        # COMPILE MAIN'S NAMES
-        self.names = self.shared.copy()
+        for k, v in self.local.items():
+            if v.type == "DEF_FUN":
+                names = self.shared.copy()
+                names.update(v.local)
+                propagate_type(v.body, names)
 
-        for node in self._local:
-            for cnode in self.compile_variable(node):
-                self.names[cnode.ident] = cnode
-            
-        # COMPILE FUNCTIONS' NAMES
-        for node in self.names:
-            if node.type == "DEF_FUN":
-                node.names = self.shared.copy()
-                for inode in node.locals:
-                    node.names[inode.ident] = inode
-                
-
-        return self.globals, self.ast, self.locals[0]
+        return self.shared, self.ast, self.local
 
     def suite(self):
         if self.token != "INDENT":
@@ -240,15 +310,23 @@ class Parser:
         if self.token in ("BYTE", "WORD"):
             token = self.token
             self.advance()
-            if self.token != "IDENT":
-                raise SyntaxError("funtion or variable without name")
-            name = self.value
-            self.advance()
-            if self.token == "(":
-                # function definition
-                node = AstNode(type="DEF_FUN", return_type=token, name=name, args=AstList())
 
+            if self.next_token == "(":
+                # function definition
+                if self.token != "IDENT":
+                    raise SyntaxError("funtion or variable without name")
+
+                node = AstNode(type="DEF_FUN", name=self.value, 
+                    return_type=token, 
+                    size=1, 
+                    args=AstList(),
+                    _local=AstList(),
+                    local=AstDict()
+                )
                 self.advance()
+                # TODO array return values "byte print_char[10](byte c[2])"
+                self.advance() # we already peek this "("
+
                 while self.token != ")":
                     if self.token not in ("BYTE", "WORD"):
                         raise SyntaxError("Unkown function argument type: %s" % self.token)
@@ -270,17 +348,26 @@ class Parser:
                     if self.token == ",":
                         self.advance()
 
-                self.locals.append(AstList())
+                # CREATE NEW SCOPE
+                self._local.append(AstList())
+                # ADD RETURN VALUE TO LOCALS
+                self._local[-1].append(AstNode(type=node.return_type, name=node.name, size=node.return_len))
+                # ADD ARGS TO LOCALS
+                for n in node.args:
+                    self._local[-1].append(n)
+
                 node.body = self.suite()
-                node.locals = self.locals.pop()
+                # STORE LOCALS TO FUNCTION and REMOVE SCOPE
+                node._local = self._local.pop()
                 
-                self.globals.append(node)
+                self._shared.append(node)
                 return AstNode(type="PASS")
 
             else:
                 # variable definition
-                self.pos -= 1
-                self.scope[-1].append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
+                #for n in create_variables(AstNode(return_type=token, value=self.simple_assignment_list())):
+                #    self.local[-1][n.name] = n
+                self._local[-1].append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
                 return AstNode(type="PASS")
 
         elif self.token == "SHARED":
@@ -288,7 +375,9 @@ class Parser:
             if self.token in ("BYTE", "WORD"):
                 token = self.token
                 self.advance()
-                self.globals.append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
+                #for n in create_variables(AstNode(return_type=token, value=self.simple_assignment_list())):
+                #    self.shared[n.name] = n
+                self._shared.append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
                 return AstNode(type="PASS")
             else:
                 raise NotImplemented()
@@ -495,9 +584,9 @@ class Parser:
 
             if op == "(":
                 if self.token == ")":
-                    left = AstNode(type="CALL", ident=left, args=AstList())
+                    left = AstNode(type="CALL", name=left, args=AstList())
                 else:
-                    left = AstNode(type="CALL", ident=left, args=self.arglist_comma())
+                    left = AstNode(type="CALL", name=left, args=self.arglist_comma())
 
                 if self.token != ")":
                     raise SyntaxError("invalid syntax")

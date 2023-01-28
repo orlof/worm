@@ -13,39 +13,34 @@ def format_data(name, data):
         rows.append("    %s" % ", ".join(data[index:index+16]))
     return rows
 
-class CodeNode(Node):
-    pass
-
-class CodeList(NodeList):
-    pass
-
 class Compiler:
     def __init__(self, shared, ast, local):
-        self._shared = shared
-        self._local = local
+        self.shared = shared
+        self.local = local
         self.ast = ast
-
-        self.shared = {}
 
         self.names = {}
         self.code = []
 
     def compile(self):
-        # ADD IMPLICIT TYPE CONVERSIONS
-        type_conv(self.ast, self.names)
-        for f in self.globals:
-            if f.type == "DEF_FUN":
-                type_conv(f.body, self.globals, f.locals)
-
-        code_segment = []
+        # COMPILE MAIN
+        self.names = self.shared.copy()
+        self.names.update(self.local)
         for node in self.ast:
-            self.code.append(self.compile_code(node))
-        
-        return self.variables, self.code
+            src = self.compile_code(node)
+            self.code += src
+
+        # COMPILE FUNCTIONS
+        # TODO
+
+        # COMPILE VARIABLES
+        # TODO
+
+        return self.code
 
     def compile_code(self, node):
         if node.type == "POKE":
-            return CodeNode(type="POKE", src=
+            node.src = 
                 self.compile_expr(node.value) +
                 self.compile_expr(node.addr) +
                 [
@@ -59,6 +54,9 @@ class Compiler:
                     "    sta (ZP_W0,x)",
                 ]
             )
+        elif node.type == "PASS":
+            return CodeNode(type="PASS", src=[])
+
         elif node.type == "START":
             return CodeNode(type="WHILE", src=
                 [
@@ -77,10 +75,9 @@ class Compiler:
             )
            
         elif node.type == "WHILE":
-            suite_code = self.compile_code(node.suite)
             return CodeNode(type="WHILE", src=
                 [
-                    "while: {",
+                    "{",
                     "expr:",
                 ] +
                 self.compile_expr(node.expr).src +
@@ -111,12 +108,11 @@ class Compiler:
             # a,b = 1,2 (calculate right side)
             nodes = []
             for rnode in node.right:
-                expr_type = self.eval_type(rnode)
                 nodes.append(self.compile_expr(rnode))
 
             for lnode in node.left[::-1]:
                 if lnode.type == "IDENT":
-                    cvar = self.variables[lnode.value]
+                    cvar = self.names[lnode.value]
                     if cvar.type == "BYTE":
                         nodes.append(CodeNode(type=cvar.type, src=[
                             "    // assign to byte ident",
@@ -293,13 +289,13 @@ class Compiler:
 
     def compile_expr(self, node):
         if node.type == "NUMERIC":
-            if node.type_out == "BYTE":
-                return CodeNode(type=node.type_out, src=[
+            if node.return_type == "BYTE":
+                return CodeNode(type=node.return_type, src=[
                     "    // byte literal %d to stack" % node.value,
                     "    lda #%d" % (node.value & 0xff),
                     "    pha",
                 ])
-            elif node.type_out == "WORD":
+            elif node.return_type == "WORD":
                 # 256
                 return CodeNode(type=out_type, src=[
                     "    // word literal %d to stack" % node.value,
@@ -312,16 +308,16 @@ class Compiler:
                 raise SyntaxError("Invalid type: %s" + out_type)
 
         elif node.type == "IDENT":
-            inode = self.variables[node.value]
+            inode = self.names[node.value]
 
-            if node.type_out == "BYTE":
+            if node.return_type == "BYTE":
                 # color
-                return CodeNode(type=node.type_out, src=[
-                    "    // push byte value of %s to stack" % inode.ident,
-                    "    lda %s" % inode.ident,
+                return CodeNode(type=node.return_type, src=[
+                    "    // push byte value of %s to stack" % inode.name,
+                    "    lda %s" % inode.name,
                     "    pha",
                 ])
-            elif node.type_out == "WORD":
+            elif node.return_type == "WORD":
                 return CodeNode(type=out_type, src=[
                     "    // cword to stack",
                     "    lda %s+1" % inode.ident,
@@ -420,7 +416,7 @@ class Compiler:
             left = self.compile_expr(node.left)
             right = self.compile_expr(node.right)
 
-            if left.type_out == "BYTE":
+            if left.return_type == "BYTE":
                 return CodeNode(type=_type, src=
                     [   "    // eval left side of <"] +
                     left.src + 
@@ -449,8 +445,8 @@ class Compiler:
         elif node.type == "+":
             left = self.compile_expr(node.left)
             right = self.compile_expr(node.right)
-            if left.type_out == "BYTE":
-                return CodeNode(type=out_type, src=
+            if node.left.return_type == "BYTE":
+                return CodeNode(type=node.type, src=
                     [   "    // eval left side of +"] +
                     left.src + 
                     [   "    // eval right side of +"] +
@@ -464,7 +460,7 @@ class Compiler:
                         "    adc ZP_W0",
                         "    pha",
                     ])
-            elif left.type_out == "WORD":
+            elif node.left.return_type == "WORD":
                 return CodeNode(type=out_type, src=
                     [   "    // eval left side of +"] +
                     left.src + 

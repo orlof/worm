@@ -58,8 +58,8 @@ class NodeDict(DotWiz):
         subtree = []
         for key, value in self.items():
             if isinstance(value, (Node, NodeList, NodeDict)):
-                subtree.append("%s%3d:\n%s" % (sub, key, value.tree(indent + 4)))
+                subtree.append("%s%s:\n%s" % (sub, key, value.tree(indent + 4)))
             else:
-                subtree.append("%s%3d: %s" % (sub, key, value))
+                subtree.append("%s%s: %s" % (sub, key, value))
 
         return "%s%s\n%s" % (sub, self.__class__.__name__, "\n".join(subtree))

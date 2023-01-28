@@ -73,22 +73,21 @@ if __name__ == "__main__":
     parser = Parser(tokens)
     shared, ast, local = parser.parse()
 
+    print("=== SHARED ===")
+    print(shared.tree())
+
+    print("=== LOCAL ===")
+    print(local.tree())
+    
+    print("=== AST ===")
     print(ast.tree())
 
     compiler = Compiler(shared, ast, local)
-    variables, nodes = compiler.compile()
+    nodes = compiler.compile()
 
     optimizer = Optimizer(nodes)
     code = optimizer.optimize()
     
-    print("=== AST ===")
-    for v in ast:
-        print(v.tree())
-    
-    print("=== COMPILED VARIABLES ===")
-    for k, v in variables.items():
-        print(v.tree())
-
     print("===SOURCE CODE===")
     with open("test.asm", "w") as f:
         f.write("// code segment\n")
