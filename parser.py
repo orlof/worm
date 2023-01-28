@@ -4,8 +4,80 @@ from lexer import Lexer, operators_arithmetic, operators_comparison
 from nodes import *
 
 
+def type_conv(ast, shared, local):
+    shared = {v.ident: v for v in shared}
+
 class AstNode(Node):
-    def optimize(self, constants, used_constants=set()):
+    def add_type_conversion(self, ):
+        if self.type == "IDENT":
+            self.return_type = self.variables[self.value].type
+
+        elif self.type == "NUMERIC":
+            if 0 <= self.value <= 255:
+                self.return_type = "BYTE"
+            elif 0 <= self.value <= 65535:
+                self.return_type = "WORD"
+            elif -32768 <= self.value <= 32767:
+                self.return_type = "INT"
+            else:
+                self.return_type = "LONG"
+
+        elif self.type == "SUBSCRIPTION":
+            self.left.add_type_conversion()
+            self.right.add_type_conversion()
+            if seself.left.value
+            self.return_type = self.left.return_type
+
+        elif self.type in ("+", "-", "*", "/", "%", "&", "|", "^"):
+            left = self.type_out(self.left)
+            right = self.type_out(self.right)
+            if "LONG" in (left, right):
+                if left != "LONG":
+                    self.left = AstNode(type="CLONG", value=self.left)
+                if right != "LONG":
+                    self.right = AstNode(type="CLONG", value=self.right)
+                return "LONG"
+            if "INT" in (left, right) and "WORD" in (left, right):
+                if left != "LONG":
+                    self.left = AstNode(type="CLONG", value=self.left)
+                if right != "LONG":
+                    self.right = AstNode(type="CLONG", value=self.right)
+                return "LONG"
+            if "WORD" in (left, right):
+                if left != "WORD":
+                    self.left = AstNode(type="CWORD", value=self.left)
+                if right != "WORD":
+                    self.right = AstNode(type="CWORD", value=self.right)
+                return "WORD"
+            if "INT" in (left, right):
+                if left != "INT":
+                    self.left = AstNode(type="CINT", value=self.left)
+                if right != "INT":
+                    self.right = AstNode(type="CINT", value=self.right)
+                return "INT"
+            return "BYTE"
+
+        elif self.type in ("**", "<<", ">>", ">>>", ">><", "<<>"):
+            return self.type_out(self.left)
+
+        elif self.type in ("UMINUS", "UNOT", "NOT"):
+            return self.type_out(self.value)
+
+        elif self.type in operators_comparison:
+            return "BYTE"
+        
+        else:
+            raise NotImplemented()
+
+    def type_in(self):
+        if self.type == "IDENT":
+            return self.variables[self.value].type
+        elif self.type == "SUBSCRIPTION":
+            return self.type_in(self.left)
+        else:
+            raise SyntaxError("Unknown assignment target")
+
+    def optimize_constants(self, constants, used_constants=set()):
         if self.type == "CONST":
             if self.ident in used_constants:
                 raise SyntaxError("Circular CONST definition: %s" % self.ident)
@@ -20,11 +92,11 @@ class AstNode(Node):
             self.update(value)
 
         for k, v in self.copy().items():
-            if isinstance(v, (AstNode, AstList)):
-                v.optimize(constants, used_constants)
-        self._optimize(constants)
+            if isinstance(v, (AstNode, AstList, AstDict)):
+                v.optimize_constants(constants, used_constants)
+        self._optimize_constants()
     
-    def _optimize(self, constants):
+    def _optimize_constants(self):
         if self["type"] in ["+", "-", "*", "%", "**", "&", "|", "^", "<<", ">>"] + operators_comparison:
             op = self["type"]
             if self["left"]["type"] == "NUMERIC" and self["right"]["type"] == "NUMERIC":
@@ -38,7 +110,13 @@ class AstNode(Node):
                 self.clear()
                 self["type"] = "NUMERIC"
                 self["value"] = value
-        if self["type"] == "!":
+        if self["type"] in ("!", "NOT"):
+            if self["value"]["type"] == "NUMERIC":
+                value = not self["value"]["value"]
+                self.clear()
+                self["type"] = "NUMERIC"
+                self.value = value
+        if self["type"] == "~":
             if self["value"]["type"] == "NUMERIC":
                 value = ~self["value"]["value"]
                 self.clear()
@@ -53,19 +131,29 @@ class AstNode(Node):
         # ">>>", ">><", "<<>" cannot be optimised without knowing the width
 
 class AstList(NodeList):
-    def optimize(self, constants, used_constants=set()):
+    def optimize_constants(self, constants, used_constants=set()):
         for v in self:
-            if isinstance(v, (Node, NodeList)):
-                v.optimize(constants, used_constants)
+            if isinstance(v, (AstNode, AstList, AstDict)):
+                v.optimize_constants(constants, used_constants)
+
+class AstDict(NodeDict):
+    def optimize_constants(self, constants, used_constants=set()):
+        for k, v in self.items():
+            if isinstance(v, (AstNode, AstList, AstDict)):
+                v.optimize_constants(constants, used_constants)
 
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.pos = 0
 
-        self.constants = {}
-        self.scope = [AstList()]
+        self._constants = {}
+        self._shared = AstList()
+        self._local = [AstList()]
         self.ast = AstList()
+
+        self.shared = {}
+        self.local = {}
 
     @property
     def token(self):
@@ -102,18 +190,40 @@ class Parser:
             else:
                 self.ast.append(self.stmt())
 
+        # OPTIMIZE CONSTANTS
         for k, v in self.constants.items():
-            v.optimize(self.constants)
+            v.optimize_constants(self.constants)
 
-        for c in self.scope[-1]:
-            c.optimize(self.constants)
+        self.locals[0].optimize_constants(self.constants)
 
-        for c in self.ast:
-            c.optimize(self.constants)
+        self.ast.optimize_constants(self.constants)
+        self.globals.optimize_constants(self.constants)
 
-        # TODO OPTIMIZE FUNCS
+        # COMPILE SHARED NAMES
+        for node in self._shared:
+            if node.type == "DEF_VAR":
+                for cnode in self.compile_variable(node):
+                    self.shared[cnode.ident] = cnode
 
-        return self.scope[-1], self.ast
+            if node.type == "DEF_FUN":
+                self.shared[cnode.ident] = cnode
+
+        # COMPILE MAIN'S NAMES
+        self.names = self.shared.copy()
+
+        for node in self._local:
+            for cnode in self.compile_variable(node):
+                self.names[cnode.ident] = cnode
+            
+        # COMPILE FUNCTIONS' NAMES
+        for node in self.names:
+            if node.type == "DEF_FUN":
+                node.names = self.shared.copy()
+                for inode in node.locals:
+                    node.names[inode.ident] = inode
+                
+
+        return self.globals, self.ast, self.locals[0]
 
     def suite(self):
         if self.token != "INDENT":
@@ -136,7 +246,7 @@ class Parser:
             self.advance()
             if self.token == "(":
                 # function definition
-                node = AstNode(type="FUNC_DEF", return_type=token, name=name, args=AstList())
+                node = AstNode(type="DEF_FUN", return_type=token, name=name, args=AstList())
 
                 self.advance()
                 while self.token != ")":
@@ -160,17 +270,28 @@ class Parser:
                     if self.token == ",":
                         self.advance()
 
-                self.scope.append(AstList())
+                self.locals.append(AstList())
                 node.body = self.suite()
-                node.locals = self.scope.pop()
-                self.functions.append(node)
+                node.locals = self.locals.pop()
+                
+                self.globals.append(node)
                 return AstNode(type="PASS")
 
             else:
                 # variable definition
                 self.pos -= 1
-                self.scope[-1].append(AstNode(type=token, value=self.simple_assignment_list()))
+                self.scope[-1].append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
                 return AstNode(type="PASS")
+
+        elif self.token == "SHARED":
+            self.advance()
+            if self.token in ("BYTE", "WORD"):
+                token = self.token
+                self.advance()
+                self.globals.append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
+                return AstNode(type="PASS")
+            else:
+                raise NotImplemented()
 
         elif self.token == "POKE":
             self.advance()
@@ -342,7 +463,7 @@ class Parser:
             return self.expr()
         if self.token == "~":
             self.advance()
-            return AstNode(type="UNOT", value=self.expr())
+            return AstNode(type="~", value=self.expr())
 
         return self.exp()
 

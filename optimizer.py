@@ -71,11 +71,11 @@ if __name__ == "__main__":
     tokens = lexer.scan()
 
     parser = Parser(tokens)
-    variable_defs, ast = parser.parse()
+    shared, ast, local = parser.parse()
 
     print(ast.tree())
 
-    compiler = Compiler(variable_defs, ast)
+    compiler = Compiler(shared, ast, local)
     variables, nodes = compiler.compile()
 
     optimizer = Optimizer(nodes)

@@ -20,17 +20,22 @@ class CodeList(NodeList):
     pass
 
 class Compiler:
-    def __init__(self, variable_defs, ast):
-        self.variable_defs = variable_defs
+    def __init__(self, shared, ast, local):
+        self._shared = shared
+        self._local = local
         self.ast = ast
 
-        self.variables = {}
+        self.shared = {}
+
+        self.names = {}
         self.code = []
 
     def compile(self):
-        for node in self.variable_defs:
-            for cnode in self.compile_variable(node):
-                self.variables[cnode.ident] = cnode
+        # ADD IMPLICIT TYPE CONVERSIONS
+        type_conv(self.ast, self.names)
+        for f in self.globals:
+            if f.type == "DEF_FUN":
+                type_conv(f.body, self.globals, f.locals)
 
         code_segment = []
         for node in self.ast:
@@ -38,80 +43,22 @@ class Compiler:
         
         return self.variables, self.code
 
-    def eval_type(self, node):
-        if node.type == "IDENT":
-            return self.variables[node.value].type
-
-        elif node.type == "NUMERIC":
-            if 0 <= node.value <= 255:
-                return "BYTE"
-            if 0 <= node.value <= 65535:
-                return "WORD"
-            if -32768 <= node.value <= 32767:
-                return "INT"
-            return "LONG"
-
-        elif node.type == "SUBSCRIPTION":
-            return self.eval_type(node.left)
-
-        elif node.type in ("+", "-", "*", "/", "%", "&", "|", "^"):
-            left = self.eval_type(node.left)
-            right = self.eval_type(node.right)
-            if "LONG" in (left, right):
-                return "LONG"
-            if "INT" in (left, right) and "WORD" in (left, right):
-                return "LONG"
-            if "WORD" in (left, right):
-                return "WORD"
-            if "INT" in (left, right):
-                return "INT"
-            return "BYTE"
-
-        elif node.type in ("**", "<<", ">>", ">>>", ">><", "<<>"):
-            return self.eval_type(node.left)
-
-        elif node.type in ("UMINUS", "UNOT", "NOT"):
-            return self.eval_type(node.value)
-
-        elif node.type in operators_comparison:
-            return "BYTE"
-        else:
-            raise SyntaxError("Unknown assignment target")
-
-    def assignment_type(self, node):
-        if node.type == "IDENT":
-            return self.variables[node.value].type
-        elif node.type == "SUBSCRIPTION":
-            return self.assignment_type(node.left)
-        else:
-            raise SyntaxError("Unknown assignment target")
-
     def compile_code(self, node):
         if node.type == "POKE":
-            if node.addr.type == "NUMERIC":
-                return CodeNode(type="POKE", src=
-                    self.compile_expr(node.value, "BYTE").src +
-                    [
-                        "    // POKE literal, expr",
-                        "    pla",
-                        "    sta %s" % node.addr.value,
-                    ]
-                )
-            else:
-                return CodeNode(type="POKE", src=
-                    self.compile_expr(node.value, "BYTE") +
-                    self.compile_expr(node.addr, "WORD") +
-                    [
-                        "    // POKE expr, expr",
-                        "    pla",
-                        "    sta ZP_W0",
-                        "    pla",
-                        "    sta ZP_W0+1",
-                        "    ldx #0",
-                        "    pla",
-                        "    sta (ZP_W0,x)",
-                    ]
-                )
+            return CodeNode(type="POKE", src=
+                self.compile_expr(node.value) +
+                self.compile_expr(node.addr) +
+                [
+                    "    // POKE expr, expr",
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    sta ZP_W0+1",
+                    "    ldx #0",
+                    "    pla",
+                    "    sta (ZP_W0,x)",
+                ]
+            )
         elif node.type == "START":
             return CodeNode(type="WHILE", src=
                 [
@@ -131,51 +78,26 @@ class Compiler:
            
         elif node.type == "WHILE":
             suite_code = self.compile_code(node.suite)
-            expr_type = self.eval_type(node)
-            if expr_type == "BYTE":
-                return CodeNode(type="WHILE", src=
-                    [
-                        "while: {",
-                        "expr:",
-                    ] +
-                    self.compile_expr(node.expr, expr_type).src +
-                    [
-                        "    // WHILE",
-                        "    pla",
-                        "    bne suite",
-                        "    jmp exit",
-                        "suite:",
-                    ] +
-                    self.compile_code(node.suite).src +
-                    [
-                        "    jmp expr",
-                        "exit:",
-                        "}",
-                    ]
-                )
-            elif expr_type == "WORD":
-                return CodeNode(type="WHILE", src=
-                    [
-                        "while: {",
-                        "expr:",
-                    ] +
-                    self.compile_expr(node.expr, expr_type) +
-                    [
-                        "    // WHILE",
-                        "    pla",
-                        "    bne suite",
-                        "    pla",
-                        "    bne suite",
-                        "    jmp exit",
-                        "suite:",
-                    ] +
-                    self.compile_code(node.suite) +
-                    [
-                        "    jmp expr"
-                        "exit:",
-                        "}",
-                    ]
-                )
+            return CodeNode(type="WHILE", src=
+                [
+                    "while: {",
+                    "expr:",
+                ] +
+                self.compile_expr(node.expr).src +
+                [
+                    "    // WHILE",
+                    "    pla",
+                    "    bne suite",
+                    "    jmp exit",
+                    "suite:",
+                ] +
+                self.compile_code(node.suite).src +
+                [
+                    "    jmp expr",
+                    "exit:",
+                    "}",
+                ]
+            )
 
         elif node.type == "LIST":
             nodes = []
@@ -190,7 +112,7 @@ class Compiler:
             nodes = []
             for rnode in node.right:
                 expr_type = self.eval_type(rnode)
-                nodes.append(self.compile_expr(rnode, expr_type))
+                nodes.append(self.compile_expr(rnode))
 
             for lnode in node.left[::-1]:
                 if lnode.type == "IDENT":
@@ -215,7 +137,7 @@ class Compiler:
                 elif lnode.type == "SUBSCRIPTION":
                     cvar = self.variables[lnode.left.value]
                     if cvar.type == "BYTE" and cvar.index_type == "BYTE":
-                        nodes.append(self.compile_expr(lnode.right, cvar.index_type))
+                        nodes.append(self.compile_expr(lnode.right))
                         nodes.append(CodeNode(type=cvar.type, src=[
                             "    // byte[byte]=byte",
                             "    pla",
@@ -224,7 +146,7 @@ class Compiler:
                             "    sta %s,x" % cvar.ident,
                         ]))
                     elif cvar.type == "BYTE" and cvar.index_type == "WORD":
-                        nodes.append(self.compile_expr(lnode.right, cvar.index_type))
+                        nodes.append(self.compile_expr(lnode.right))
                         nodes.append(CodeNode(type=cvar.type, src=[
                             "    // byte[word]=byte",
                             "    pla",
@@ -241,7 +163,7 @@ class Compiler:
                             "    sta (ZP_W0),y"
                         ]))
                     elif cvar.type == "WORD" and cvar.index_type == "BYTE":
-                        nodes.append(self.compile_expr(lnode.right, cvar.index_type))
+                        nodes.append(self.compile_expr(lnode.right))
                         nodes.append(CodeNode(type=cvar.type, src=[
                             "    // word[byte]=word",
                             "    pla",
@@ -252,7 +174,7 @@ class Compiler:
                             "    sta %s_hi,x" % cvar.ident,
                         ]))
                     elif cvar.type == "WORD" and cvar.index_type == "WORD":
-                        nodes.append(self.compile_expr(lnode.right, cvar.index_type))
+                        nodes.append(self.compile_expr(lnode.right))
                         nodes.append(CodeNode(type=cvar.type, src=[
                             "    // word[word]=word",
                             "    pla",
@@ -369,19 +291,15 @@ class Compiler:
                 else:
                     raise SyntaxError("Syntax error in definition")
 
-    def compile_expr(self, node, out_type):
+    def compile_expr(self, node):
         if node.type == "NUMERIC":
-            if out_type == "ANY":
-                out_type = "WORD" if node.value > 255 else "BYTE"
-
-            if out_type == "BYTE":
-                # 1
-                return CodeNode(type=out_type, src=[
+            if node.type_out == "BYTE":
+                return CodeNode(type=node.type_out, src=[
                     "    // byte literal %d to stack" % node.value,
                     "    lda #%d" % (node.value & 0xff),
                     "    pha",
                 ])
-            elif out_type == "WORD":
+            elif node.type_out == "WORD":
                 # 256
                 return CodeNode(type=out_type, src=[
                     "    // word literal %d to stack" % node.value,
@@ -395,34 +313,22 @@ class Compiler:
 
         elif node.type == "IDENT":
             inode = self.variables[node.value]
-            if out_type == "ANY":
-                out_type = inode.type
 
-            if out_type == "BYTE":
+            if node.type_out == "BYTE":
                 # color
-                return CodeNode(type=out_type, src=[
+                return CodeNode(type=node.type_out, src=[
                     "    // push byte value of %s to stack" % inode.ident,
                     "    lda %s" % inode.ident,
                     "    pha",
                 ])
-            elif out_type == "WORD":
-                # addr
-                if inode.type == "BYTE":
-                    return CodeNode(type=out_type, src=[
-                        "    // push word value of %s to stack" % inode.ident,
-                        "    lda #0",
-                        "    pha",
-                        "    lda %s" % inode.ident,
-                        "    pha",
-                    ])
-                elif inode.type == "WORD":
-                    return CodeNode(type=out_type, src=[
-                        "    // cword to stack",
-                        "    lda %s+1" % inode.ident,
-                        "    pha",
-                        "    lda %s" % inode.ident,
-                        "    pha",
-                    ])
+            elif node.type_out == "WORD":
+                return CodeNode(type=out_type, src=[
+                    "    // cword to stack",
+                    "    lda %s+1" % inode.ident,
+                    "    pha",
+                    "    lda %s" % inode.ident,
+                    "    pha",
+                ])
             else:
                 raise SyntaxError("Invalid type: %s" + out_type)
 
@@ -431,151 +337,90 @@ class Compiler:
                 raise SyntaxError("Cannot index: %s" % node.left.type)
 
             cvar = self.variables[node.left.value]
-            right = self.compile_expr(node.right, cvar.index_type)
+            right = self.compile_expr(node.right)
 
             if cvar.type == "BYTE" and cvar.index_type == "BYTE":
-                if out_type == "BYTE":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    tay",
-                            "    lda %s,y" % cvar.ident,
-                            "    pha"
-                        ]
-                    )
-                elif out_type == "WORD":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    tay",
-                            "    lda #0",
-                            "    pha",
-                            "    lda %s,y" % cvar.ident,
-                            "    pha"
-                        ]
-                    )
+                return CodeNode(type=cvar.type, src=
+                    right.src +
+                    [
+                        "    pla",
+                        "    tay",
+                        "    lda %s,y" % cvar.ident,
+                        "    pha"
+                    ]
+                )
             if cvar.type == "BYTE" and cvar.index_type == "WORD":
-                if out_type == "BYTE":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    clc",
-                            "    adc #<%s_lo" % cvar.ident,
-                            "    sta ZP_W0",
+                return CodeNode(type=out_type, src=
+                    right.src +
+                    [
+                        "    pla",
+                        "    clc",
+                        "    adc #<%s_lo" % cvar.ident,
+                        "    sta ZP_W0",
 
-                            "    pla",
-                            "    adc #>%s_lo" % cvar.ident,
-                            "    sta ZP_W0+1",
+                        "    pla",
+                        "    adc #>%s_lo" % cvar.ident,
+                        "    sta ZP_W0+1",
 
-                            "    ldy #0",
-                            "    lda (ZP_W0),y",
-                            "    pha",
-                        ]
-                    )
-                elif out_type == "WORD":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    clc",
-                            "    adc #<%s_lo" % cvar.ident,
-                            "    sta ZP_W0",
-
-                            "    pla",
-                            "    adc #>%s_lo" % cvar.ident,
-                            "    sta ZP_W0+1",
-
-                            "    ldy #0",
-                            "    lda (ZP_W0),y",
-                            "    pha",
-                        ]
-                    )
+                        "    ldy #0",
+                        "    lda (ZP_W0),y",
+                        "    pha",
+                    ]
+                )
             if cvar.type == "WORD" and cvar.index_type == "BYTE":
-                if out_type == "BYTE":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    tay",
+                return CodeNode(type=out_type, src=
+                    right.src +
+                    [
+                        "    pla",
+                        "    tay",
 
-                            "    ldy %s_lo,y" % cvar.ident,
-                            "    pha",
-                        ]
-                    )
-                elif out_type == "WORD":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    tay",
+                        "    lda %s_hi,y" % cvar.ident,
+                        "    pha",
 
-                            "    lda %s_hi,y" % cvar.ident,
-                            "    pha",
-
-                            "    lda %s_lo,y" % cvar.ident,
-                            "    pha",
-                        ]
-                    )
+                        "    lda %s_lo,y" % cvar.ident,
+                        "    pha",
+                    ]
+                )
             if cvar.type == "WORD" and cvar.index_type == "WORD":
-                if out_type == "BYTE":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    clc",
-                            "    adc #<%s_lo" % cvar.ident,
-                            "    sta ZP_W0",
+                return CodeNode(type=out_type, src=
+                    right.src +
+                    [
+                        "    pla",
+                        "    clc",
+                        "    adc #<%s_lo" % cvar.ident,
+                        "    sta ZP_W0",
 
-                            "    pla",
-                            "    adc #>%s_lo" % cvar.ident,
-                            "    sta ZP_W0+1",
+                        "    pla",
+                        "    adc #>%s_lo" % cvar.ident,
+                        "    sta ZP_W0+1",
 
-                            "    ldy #0",
-                            "    lda (ZP_W0),y",
-                            "    pha",
-                        ]
-                    )
-                elif out_type == "WORD":
-                    return CodeNode(type=out_type, src=
-                        right.src +
-                        [
-                            "    pla",
-                            "    clc",
-                            "    adc #<%s_lo" % cvar.ident,
-                            "    sta ZP_W0",
+                        "    ldy #0",
+                        "    lda (ZP_W0),y",
+                        "    tax",
 
-                            "    pla",
-                            "    adc #>%s_lo" % cvar.ident,
-                            "    sta ZP_W0+1",
-
-                            "    ldy #0",
-                            "    lda (ZP_W0),y",
-                            "    tax",
-
-                            "    lda #%d" % ((cvar.size >> 8) & 0xff),
-                            "    clc",
-                            "    adc ZP_W0+1",
-                            "    sta ZP_W0+1",
-                            "    ldy #%d" % (cvar.size & 0xff),
-                            "    lda (ZP_W0),y",
-                            "    pha",
-                            "    txa",
-                            "    pha",
-                        ]
-                    )
+                        "    lda #%d" % ((cvar.size >> 8) & 0xff),
+                        "    clc",
+                        "    adc ZP_W0+1",
+                        "    sta ZP_W0+1",
+                        "    ldy #%d" % (cvar.size & 0xff),
+                        "    lda (ZP_W0),y",
+                        "    pha",
+                        "    txa",
+                        "    pha",
+                    ]
+                )
 
         elif node.type == "AND_LIST":
             if len(node.value) == 1:
-                return self.compile_expr(node.value[0], out_type)
+                return self.compile_expr(node.value[0])
+            else:
+                raise NotImplemented()
 
         elif node.type == "<":
-            _type = self.eval_type(node)
-            left = self.compile_expr(node.left, _type)
-            right = self.compile_expr(node.right, _type)
-            if _type == "BYTE":
+            left = self.compile_expr(node.left)
+            right = self.compile_expr(node.right)
+
+            if left.type_out == "BYTE":
                 return CodeNode(type=_type, src=
                     [   "    // eval left side of <"] +
                     left.src + 
@@ -598,13 +443,13 @@ class Compiler:
                         "}"
                     ]
                 )
-
-
+            else:
+                raise NotImplemented()
 
         elif node.type == "+":
-            left = self.compile_expr(node.left, out_type)
-            right = self.compile_expr(node.right, out_type)
-            if out_type == "BYTE":
+            left = self.compile_expr(node.left)
+            right = self.compile_expr(node.right)
+            if left.type_out == "BYTE":
                 return CodeNode(type=out_type, src=
                     [   "    // eval left side of +"] +
                     left.src + 
@@ -619,7 +464,7 @@ class Compiler:
                         "    adc ZP_W0",
                         "    pha",
                     ])
-            elif out_type == "WORD":
+            elif left.type_out == "WORD":
                 return CodeNode(type=out_type, src=
                     [   "    // eval left side of +"] +
                     left.src + 
@@ -643,8 +488,8 @@ class Compiler:
                         "    pha",
                     ])
             else:
-                raise SyntaxError("Invalid type: %s" + out_type)
+                raise NotImplemented()
 
         else:
-            raise SyntaxError("Unknown code node: %s" % node.type)        
+            raise NotImplemented()      
 
