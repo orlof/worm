@@ -137,15 +137,58 @@ def propagate_type(node, names):
             else:
                 node.return_type = "BYTE"
         
+        elif node.type in ("=", "+=", "-=", "*=", "/=", "&=", "|=", "^=", "!=", "<<=", ">>=", ">>>=", ">><=", "<<>="):
+            node.return_type = "???"
+            propagate_type(node.left, names)
+            propagate_type(node.right, names)
+
+        elif node.type in ("==", "<", ">", ">=", "<=", "!=", "<>"):
+            node.return_type = "BYTE"
+            left = propagate_type(node.left, names)
+            right = propagate_type(node.right, names)
+
+            if "LONG" in (left, right):
+                node.child_type = "LONG"
+                if left != "LONG":
+                    node.left = AstNode(type="CLONG", return_type="LONG", value=node.left)
+                if right != "LONG":
+                    node.right = AstNode(type="CLONG", return_type="LONG", value=node.right)
+            elif "INT" in (left, right) and "WORD" in (left, right):
+                node.child_type = "LONG"
+                if left != "LONG":
+                    node.left = AstNode(type="CLONG", return_type="LONG", value=node.left)
+                if right != "LONG":
+                    node.right = AstNode(type="CLONG", return_type="LONG", value=node.right)
+            elif "WORD" in (left, right):
+                node.child_type = "WORD"
+                if left != "WORD":
+                    node.left = AstNode(type="CWORD", return_type="WORD", value=node.left)
+                if right != "WORD":
+                    node.right = AstNode(type="CWORD", return_type="WORD", value=node.right)
+            elif "INT" in (left, right):
+                node.child_type = "INT"
+                if left != "INT":
+                    node.left = AstNode(type="CINT", return_type="INT", value=node.left)
+                if right != "INT":
+                    node.right = AstNode(type="CINT", return_type="INT", value=node.right)
+            else:
+                node.child_type = "BYTE"
+        
         elif node.type in ("**", "<<", ">>", ">>>", ">><", "<<>"):
             node.return_type = propagate_type(node.left, names)
             propagate_type(node.right, names)
 
-        elif node.type in ("UMINUS", "UNOT", "NOT"):
+        elif node.type in ("UMINUS", "UNOT"):
             node.return_type = propagate_type(node.value, names)
 
-        elif node.type in operators_comparison + ["AND", "OR", "PEEK"]:
+        elif node.type == "NOT":
             node.return_type = "BYTE"
+            propagate_type(node.value, names)
+
+        elif node.type in operators_comparison + ["AND", "OR"]:
+            node.return_type = "BYTE"
+            propagate_type(node.left, names)
+            propagate_type(node.right, names)
 
         elif node.type == "CALL":
             node.return_type =  names[node.name].return_type
@@ -156,11 +199,43 @@ def propagate_type(node, names):
                     node.args[n] = AstNode(type="C%s" % arg_def.return_type, return_type=arg_def.return_type, value=node.args[n])
 
         elif node.type == "RETURN":
-            node.return_type =  names["_RETURN_"].return_type
+            node.return_type = "???" # names["_RETURN_"].return_type
             expr_type = propagate_type(node.value, names)
             if expr_type != node.return_type:
                 node.value = AstNode(type="C%s" % node.return_type, return_type=node.return_type, value=node.expr)
         
+        elif node.type == "IF":
+            node.return_type = "???"
+            for index, branch in enumerate(node.branches.copy()):
+                branch_type = propagate_type(branch, names)
+                if branch_type != "BYTE":
+                    node.branches[index] = AstNode(type="CBYTE", return_type="BYTE", value=node.branches[index])
+            if "_else" in node:
+                propagate_type(node._else, names)
+
+        elif node.type == "ELSE_IF":
+            node.return_type = "???"
+            propagate_type(node.expr, names)
+            propagate_type(node.body, names)
+
+        elif node.type == "ELSE":
+            node.return_type = "???"
+            propagate_type(node.body, names)
+
+        elif node.type == "PEEK":
+            node.return_type = "BYTE"
+            propagate_type(node.addr, names)
+
+        elif node.type == "POKE":
+            node.return_type = "???"
+            propagate_type(node.addr, names)
+            propagate_type(node.value, names)
+
+        elif node.type == "WHILE":
+            node.return_type = "???"
+            propagate_type(node.expr, names)
+            propagate_type(node.body, names)
+
         else:
             node.return_type = "???"
 
@@ -415,6 +490,18 @@ class Parser:
             value = self.expr()
             return AstNode(type="POKE", addr=addr, value=value)
 
+        elif self.token == "PEEK":
+            self.advance()
+            if self.token != "(":
+                raise SyntaxError()
+            self.advance()
+            addr = self.expr()
+            if self.token != ")":
+                raise SyntaxError()
+            self.advance()
+
+            return AstNode(type="PEEK", addr=addr)
+
         elif self.token == "RETURN":
             self.advance()
             return AstNode(type="RETURN", value=self.expr())
@@ -423,14 +510,31 @@ class Parser:
             self.advance()
 
             expr = self.expr()
-            if self.token != ":":
-                raise SyntaxError("No : after while expression")
-            self.advance()
-            if self.token == "INDENT":
-                return AstNode(type="WHILE", expr=expr, suite=self.suite())
-            else:
-                return AstNode(type="WHILE", expr_type=expr_type, expr=expr, suite=self.stmt())
+            # if self.token != ":":
+            #     raise SyntaxError("No : after while expression")
+            # self.advance()
+            #if self.token == "INDENT":
+            return AstNode(type="WHILE", expr=expr, suite=self.suite())
+            #else:
+            #    return AstNode(type="WHILE", expr_type=expr_type, expr=expr, suite=self.stmt())
 
+        elif self.token == "IF":
+            self.advance()
+            node = AstNode(type="IF", branches=AstList())
+
+            while True:
+                node.branches.append(AstNode(type="ELSE_IF", expr=self.expr(), body=self.suite()))
+                if self.token == "ELSE" and self.next_token == "IF":
+                    self.advance()
+                    self.advance()
+                    continue
+                break
+            if self.token == "ELSE":
+                self.advance()
+                node._else = AstNode(type="ELSE", body=self.suite())
+            
+            return node
+        
         else:
             return self.assignment()
             #print("Not processed: %s, %s" % (self.token, self.value))
@@ -530,13 +634,13 @@ class Parser:
 
     def comp(self):
         nodes = AstList()
-        left = self.addsub()
+        left = self.bitwise_or()
 
         while self.token in ("==", "<", ">", ">=", "<=", "!=", "<>"):
             op = self.token
             self.advance()
 
-            right = self.addsub()
+            right = self.bitwise_or()
 
             nodes.append(AstNode(type=op, left=left, right=right))
 
@@ -544,8 +648,58 @@ class Parser:
 
         if not nodes:
             return left
+        elif len(nodes) == 1:
+            return nodes[0]
         else:
             return AstNode(type="AND_LIST", value=nodes)
+
+    def bitwise_or(self):
+        left = self.bitwise_xor()
+
+        while self.token == "|":
+            op = self.token
+            self.advance()
+            right = self.bitwise_xor()
+
+            left = AstNode(type=op, left=left, right=right)
+
+        return left
+
+    def bitwise_xor(self):
+        left = self.bitwise_and()
+
+        while self.token == "^":
+            op = self.token
+            self.advance()
+            right = self.bitwise_and()
+
+            left = AstNode(type=op, left=left, right=right)
+
+        return left
+
+    def bitwise_and(self):
+        left = self.shift()
+
+        while self.token == "&":
+            op = self.token
+            self.advance()
+            right = self.shift()
+
+            left = AstNode(type=op, left=left, right=right)
+
+        return left
+
+    def shift(self):
+        left = self.addsub()
+
+        while self.token in ("<<", ">>", ">>>", ">><", "<<>"):
+            op = self.token
+            self.advance()
+            right = self.addsub()
+
+            left = AstNode(type=op, left=left, right=right)
+
+        return left
 
     def addsub(self):
         left = self.muldiv()
@@ -565,7 +719,7 @@ class Parser:
         while self.token in ("*", "/"):
             op = self.token
             self.advance()
-            right = self.unary_minusplus()
+            right = self.unary_minusplusnot()
 
             left = AstNode(type=op, left=left, right=right)
 

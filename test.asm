@@ -1,76 +1,51 @@
+// PREAMBLE
 .const ZP_W0 = $fb
 *=2048
 .byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061
 *=2061
-{
-expr:
-    // byte literal 1 to stack
-    // lda #1
-    // pha
-    // WHILE
-    lda #1 // optimized
-    bne suite
-    jmp exit
-suite:
-    // push byte value of color to stack
-    lda color
-    // pha
-    // pla
-    sta inc.b
-    jsr inc
-    lda inc._RETURN_
-    // pha
-    // assign to byte ident
-    // pla
-    sta color
-    // push byte value of color to stack
-    // lda color
-    pha
-    // word literal 53280 to stack
-    // lda #208
-    // pha
+    sei
+    dec 1
+    cli
+// PROGRAM CODE
+{ // BYTE *
+    // byte literal 32 to stack
     // lda #32
     // pha
-    // POKE expr, expr
+    // push byte value of a to stack
+    // lda a
+    // pha
+    lda a // optimized
+    sta ZP_W0
     lda #32 // optimized
-    sta ZP_W0
-    lda #208 // optimized
     sta ZP_W0+1
-    ldx #0
-    pla
-    sta (ZP_W0,x)
-    jmp expr
-exit:
+    jsr BYTE_MULTIPLY
+    // lda ZP_W0
+    // pha
 }
+    // assign to byte ident
+    lda ZP_W0 // optimized
+    sta a
+// POSTAMBLE
+    sei
+    inc 1
+    cli
     rts
-// MAIN END
+// END
 
-inc: {
-// CODE
-    // eval left side of +
-    // push byte value of b to stack
-    lda b
-    pha
-    // eval right side of +
-    // byte literal 1 to stack
-    // lda #1
-    // pha
-    // byte l + r
-    lda #1 // optimized
-    sta ZP_W0
-    pla
+BYTE_MULTIPLY: {
+    lda #0
+    ldx #$8
+    lsr ZP_W0
+loop:
+    bcc no_add
     clc
-    adc ZP_W0
-    // pha
-    // pla
-    sta _RETURN_
-    rts
-    // rts
-// VARIABLES
-_RETURN_:
-    .byte $00
-b:
-    .byte $00
+    adc ZP_W0+1
+no_add:
+    ror
+    ror ZP_W0
+    dex
+    bne loop
+    sta ZP_W0+1    rts
 }
-color:
-    .byte $00
+a:
+    .byte $05

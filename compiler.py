@@ -22,6 +22,8 @@ class Compiler:
         self.names = {}
         self.code = []
 
+        self.library = {}
+
     def compile(self):
         # COMPILE MAIN
         self.names = self.shared.copy()
@@ -36,6 +38,9 @@ class Compiler:
                 self.names = self.shared.copy()
                 self.names.update(node.local)
                 self.code += self.compile_function(node)
+
+        for name, func in self.library.items():
+            self.code += func
 
         # COMPILE VARIABLES
         for name, node in self.shared.items():
@@ -107,22 +112,24 @@ class Compiler:
                 raise NotImplementedError()
         
         elif node.type == "CALL":
+            def_args = self.shared[node.name].args
+            if len(def_args) != len(node.args):
+                raise SyntaxError("%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args)))
+
             code = []
-            for n in range(len(node.args)):
-                arg = node.args[n]
-                arg_def = self.shared[node.name].args[n]
-                code += self.compile_expr(arg)
-                if arg.return_type == "BYTE":
+            for call_arg, def_arg in zip(node.args, def_args):
+                code += self.compile_expr(call_arg)
+                if call_arg.return_type == "BYTE":
                     code += [
                         "    pla",
-                        "    sta %s.%s" % (node.name, arg_def.name),
+                        "    sta %s.%s" % (node.name, def_arg.name),
                     ]
-                elif arg.return_type == "WORD":
+                elif call_arg.return_type == "WORD":
                     code += [
                         "    pla",
-                        "    sta %s.%s" % (node.name, arg_def.name),
+                        "    sta %s.%s" % (node.name, def_arg.name),
                         "    pla",
-                        "    sta %s.%s+1" % (node.name, arg_def.name),
+                        "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
                 else:
                     raise NotImplementedError()
@@ -157,7 +164,6 @@ class Compiler:
             else:
                 raise NotImplementedError()
                 
-
         elif node.type == "POKE":
             return (
                 self.compile_expr(node.value) +
@@ -168,54 +174,133 @@ class Compiler:
                     "    sta ZP_W0",
                     "    pla",
                     "    sta ZP_W0+1",
-                    "    ldx #0",
+                    "    ldy #0",
                     "    pla",
-                    "    sta (ZP_W0,x)",
+                    "    sta (ZP_W0),y",
                 ]
             )
+        elif node.type == "PASS":
+            return []
+
+        elif node.type == "PEEK":
+            code = [ "// BYTE %s" % node.type ]
+            code += self.compile_expr(node.addr)
+            code += [
+                "    // BYTE PEEK",
+                "    pla",
+                "    sta ZP_W0",
+                "    pla",
+                "    sta ZP_W0+1",
+                "    ldy #0",
+                "    lda (ZP_W0),y",
+                "    pha",
+            ]
+
         elif node.type == "PASS":
             return []
 
         elif node.type == "START":
             return (
                 [
+                    "// PREAMBLE",
                     ".const ZP_W0 = $fb",
                     "*=2048",
                     ".byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061",
                     "*=2061",
+                    "    sei",
+                    "    dec 1",
+                    "    cli",
+                    "// PROGRAM CODE",
                 ]
             )
         
         elif node.type == "END":
             return (
                 [
+                    "// POSTAMBLE",
+                    "    sei",
+                    "    inc 1",
+                    "    cli",
                     "    rts",
-                    "// MAIN END",
+                    "// END",
                     "",
                 ]
             )
            
         elif node.type == "WHILE":
-            return (
-                [
-                    "{",
-                    "expr:",
-                ] +
-                self.compile_expr(node.expr) +
-                [
+            code = []
+            code += [
+                "{ // WHILE",
+                "expr:",
+            ]
+
+            if node.expr.type == "NUMERIC" and node.expr.value == 1:
+                code += [ "suite:" ]
+            else:
+                code += self.compile_expr(node.expr)
+                code += [
                     "    // WHILE",
                     "    pla",
                     "    bne suite",
                     "    jmp exit",
                     "suite:",
-                ] +
-                self.compile_code(node.suite) +
-                [
-                    "    jmp expr",
-                    "exit:",
-                    "}",
+                ] 
+            
+            code += self.compile_code(node.suite)
+            code += [
+                "    jmp expr",
+                "exit:",
+                "}",
+            ]
+
+            return code
+        
+        elif node.type == "IF":
+            code = []
+            code += [
+                "{ // IF",
+            ]
+
+            for index, branch in enumerate(node.branches):
+                code += [
+                    "!expr:",
                 ]
-            )
+                code += self.compile_expr(branch.expr)
+                code += [
+                    "    pla",
+                    "    beq !expr+",
+                    "    jmp suite%d" % index,
+                    ""
+                ]
+            
+            code += [
+                "// ELSE",
+                "!expr:"
+            ]
+
+            if "_else" in node:
+                code += self.compile_code(node._else.body)
+
+            code += [
+                "    jmp exit"
+            ]
+
+            for index, branch in enumerate(node.branches):
+                code += [
+                    "suite%d:" % index,
+                ]
+                code += self.compile_code(branch.body)
+                code += [
+                    "    jmp exit",
+                    ""
+                ]
+
+            code += [
+                "exit:",
+                "}"
+            ]
+
+            return code
 
         elif node.type == "=":
             # a,b = 1,2 (calculate right side)
@@ -366,22 +451,24 @@ class Compiler:
                 raise SyntaxError("Invalid type: %s" + out_type)
 
         elif node.type == "CALL":
+            def_args = self.shared[node.name].args
+            if len(def_args) != len(node.args):
+                raise SyntaxError("%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args)))
+
             code = []
-            for n in range(len(node.args)):
-                arg = node.args[n]
-                arg_def = self.shared[node.name].args[n]
-                code += self.compile_expr(arg)
-                if arg.return_type == "BYTE":
+            for call_arg, def_arg in zip(node.args, def_args):
+                code += self.compile_expr(call_arg)
+                if call_arg.return_type == "BYTE":
                     code += [
                         "    pla",
-                        "    sta %s.%s" % (node.name, arg_def.name),
+                        "    sta %s.%s" % (node.name, def_arg.name),
                     ]
-                elif arg.return_type == "WORD":
+                elif call_arg.return_type == "WORD":
                     code += [
                         "    pla",
-                        "    sta %s.%s" % (node.name, arg_def.name),
+                        "    sta %s.%s" % (node.name, def_arg.name),
                         "    pla",
-                        "    sta %s.%s+1" % (node.name, arg_def.name),
+                        "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
                 else:
                     raise NotImplementedError()
@@ -492,54 +579,116 @@ class Compiler:
                 raise NotImplemented()
 
         elif node.type == "<":
-            left = self.compile_expr(node.left)
-            right = self.compile_expr(node.right)
-
             if node.left.return_type == "BYTE":
-                return (
-                    [   "    // eval left side of <"] +
-                    left + 
-                    [   "    // eval right side of <"] +
-                    right +
-                    [
-                        "less_than: {",
-                        "    // byte l < r",
-                        "    pla",
-                        "    sta ZP_W0",
-                        "    pla",
-                        "    cmp ZP_W0",
-                        "    bcc ret_true",
-                        "    lda #0",
-                        "    jmp exit",
-                        "ret_true:",
-                        "    lda #1",
-                        "exit:",
-                        "    pha",
-                        "}"
-                    ]
-                )
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    cmp ZP_W0",
+                    "    bcc true",
+                    "    lda #0",
+                    "    jmp exit",
+                    "true:",
+                    "    lda #1",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
             else:
                 raise NotImplemented()
 
+        elif node.type == "AND":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += [
+                    "    pla",
+                    "    bne right",
+                    "    jmp true",
+                    "right:",
+                ]
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    bne true",
+                    "    lda #0",
+                    "    jmp exit",
+                    "true:",
+                    "    lda #1",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "OR":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += [
+                    "    pla",
+                    "    beq right",
+                    "    jmp true",
+                    "right:",
+                ]
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    bne true",
+                    "    lda #0",
+                    "    jmp exit",
+                    "true:",
+                    "    lda #1",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "NOT":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.value)
+                code += [
+                    "    pla",
+                    "    bne true",
+                    "    lda #0",
+                    "    jmp exit",
+                    "true:",
+                    "    lda #1"
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
         elif node.type == "+":
-            left = self.compile_expr(node.left)
-            right = self.compile_expr(node.right)
-            if node.left.return_type == "BYTE":
-                return (
-                    [   "    // eval left side of +"] +
-                    left + 
-                    [   "    // eval right side of +"] +
-                    right +
-                    [
-                        "    // byte l + r",
-                        "    pla",
-                        "    sta ZP_W0",
-                        "    pla",
-                        "    clc",
-                        "    adc ZP_W0",
-                        "    pha",
-                    ]
-                )
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    // byte l + r",
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    clc",
+                    "    adc ZP_W0",
+                    "    pha",
+                    "}"
+                ]
+                return code
+            
             elif node.left.return_type == "WORD":
                 return (
                     [   "    // eval left side of +"] +
@@ -566,6 +715,323 @@ class Compiler:
             else:
                 raise NotImplemented()
 
+        elif node.type == "-":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    sec",
+                    "    sbc ZP_W0",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "*":
+            if node.return_type == "BYTE":
+                self.library["BYTE_MULTIPLY"] = LIBRARY["BYTE_MULTIPLY"]
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    sta ZP_W0+1",
+
+                    "    jsr BYTE_MULTIPLY",
+
+                    "    lda ZP_W0",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "/":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0+1",
+                    "    pla",
+                    "    sta ZP_W0",
+
+                    "//  ZP_W0 / ZP_W0+1",
+                    "    lda #0",
+                    "    ldx #8",
+                    "    asl ZP_W0",
+                    "l1:",
+                    "    rol",
+                    "    cmp ZP_W0+1",
+                    "    bcc l2",
+                    "    sbc ZP_W0+1",
+                    "l2:",
+                    "    rol ZP_W0",
+                    "    dex",
+                    "    bne l1",
+                    "// ZP_W0 quotient, ZP_W0+1 remainder",
+
+                    "    lda ZP_W0"
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "%":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0+1",
+                    "    pla",
+                    "    sta ZP_W0",
+
+                    "//  ZP_W0 / ZP_W0+1",
+                    "    lda #0",
+                    "    ldx #8",
+                    "    asl ZP_W0",
+                    "l1:",
+                    "    rol",
+                    "    cmp ZP_W0+1",
+                    "    bcc l2",
+                    "    sbc ZP_W0+1",
+                    "l2:",
+                    "    rol ZP_W0",
+                    "    dex",
+                    "    bne l1",
+                    "// ZP_W0 quotient, ZP_W0+1 remainder",
+
+                    "    lda ZP_W0+1"
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "&":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    and ZP_W0",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "|":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    ora ZP_W0",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "^":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    eor ZP_W0",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "~":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    eor #$ff",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "<<":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    beq exit"
+                    "    tax",
+                    "    pla",
+                    "    cpx #0",
+                    "    beq exit",
+                    "loop:",
+                    "    asl",
+                    "    dex",
+                    "    bne loop",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == ">>":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    tax",
+                    "    pla",
+                    "    cpx #0",
+                    "    beq exit",
+                    "loop:",
+                    "    lsr",
+                    "    dex",
+                    "    bne loop",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == ">>>":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    tax",
+                    "    pla",
+                    "    cpx #0",
+                    "    beq exit",
+                    "loop:",
+                    "    cmp #$80",
+                    "    ror",
+                    "    dex",
+                    "    bne loop",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == ">><":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    tax",
+                    "    pla",
+                    "    cpx #0",
+                    "    beq exit",
+                    "loop:",
+                    "    tay",
+                    "    ror",
+                    "    tya",
+                    "    ror",
+                    "    dex",
+                    "    bne loop",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "<<>":
+            if node.return_type == "BYTE":
+                code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    tax",
+                    "    pla",
+                    "    cpx #0",
+                    "    beq exit",
+                    "loop:",
+                    "    tay",
+                    "    rol",
+                    "    tya",
+                    "    rol",
+                    "    dex",
+                    "    bne loop",
+                    "exit:",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
         else:
             raise NotImplemented()      
 
+LIBRARY = {
+    "BYTE_MULTIPLY": [ 
+        "BYTE_MULTIPLY: {",
+        "    lda #0",
+        "    ldx #$8",
+        "    lsr ZP_W0",
+        "loop:",
+        "    bcc no_add",
+        "    clc",
+        "    adc ZP_W0+1",
+        "no_add:",
+        "    ror",
+        "    ror ZP_W0",
+        "    dex",
+        "    bne loop",
+        "    sta ZP_W0+1"
+        "    rts",
+        "}"
+    ]
+}

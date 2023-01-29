@@ -22,7 +22,7 @@ class Optimizer:
                 if line.src.startswith("    pla") and stack:
                     lda_line, pha_line = stack.pop()
 
-                    if lda_line.src.startswith("    lda #"):
+                    if lda_line.src.startswith("    lda"):
                         self.code[line.nr] = "%s // optimized" % lda_line.src
                         self.code[lda_line.nr] = "    // %s" % lda_line.src[4:]
                         self.code[pha_line.nr] = "    // %s" % pha_line.src[4:]
@@ -57,11 +57,25 @@ class Optimizer:
                     self.code[line.nr] = "    // %s" % line.src[4:]
                 prev_line = line
 
+        # optimise jmp to next instruction
+        code_lines = list(self.line_iterator2())
+        prev_line = DotWiz(src="")
+        for line in code_lines:
+            tokens = prev_line.src.strip().split()
+            if len(tokens) > 1 and tokens[0] in ("jmp", "bcc", "bcs", "beq", "bne", "bmi", "bpl", "bvc", "bvs") and line.src.strip().startswith(tokens[1]+":"):
+                self.code[prev_line.nr] = self.code[prev_line.nr].replace("jmp", "// jmp")
+            prev_line = line
+
         return self.code
 
     def line_iterator(self):
         for line_nr, line in enumerate(self.code):
-            if line and (not line.strip().startswith("//")):
+            if line and not line.strip().startswith("{") and not line.strip().startswith("}") and (not line.strip().startswith("//")):
+                yield DotWiz(nr=line_nr, src=line)
+
+    def line_iterator2(self):
+        for line_nr, line in enumerate(self.code):
+            if line and not line.strip().startswith("//"):
                 yield DotWiz(nr=line_nr, src=line)
 
     def block_iterator(self, lines):

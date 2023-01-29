@@ -19,4 +19,14 @@ CALL
  name="inc"
  args=AstList
  return_type="BYTE"
- 
+
+IF
+ type="IF"
+ branches=
+  AstList
+   type="ELSE_IF"
+   expr=AstNode
+   body=AstNode
+ _else: AstNode
+  type="ELSE"
+  body=AstNode
