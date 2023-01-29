@@ -11,17 +11,15 @@
 #CONST c = 1
 #CONST a = b+1
 #CONST b = a+1
-CONST FOO=5
 
-shared byte big=FOO
 byte color = 0
 while true:
-    color = color + 1
+    color = inc(color)
     poke 0xd020, color
 
-#byte inc(byte b)
-#    return b+1
-#
+byte inc(byte b)
+    return b+1
+
 #byte print_char[10](byte c[2])
 #    byte x = 0, y = 0
 #    POKE 1024 + 40 * y + x, char

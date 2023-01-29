@@ -3,11 +3,11 @@ from dotwiz import DotWiz
 from lexer import Lexer, operators_arithmetic, operators_comparison
 from nodes import *
 from parser import Parser, AstNode, AstList
-from compiler import Compiler, CodeNode, CodeList
+from compiler import Compiler
 
 class Optimizer:
-    def __init__(self, nodes):
-        self.nodes = nodes
+    def __init__(self, code):
+        self.code = code
 
     def optimize(self):
         code_lines = list(self.line_iterator())
@@ -32,24 +32,28 @@ class Optimizer:
 
         # optimise pha, pla
         for block in self.block_iterator(code_lines):
+            prev_line = DotWiz(src="")
             for line in block:
-                for next_line in code_lines[line.nr + 1:]:
-                    if next_line.src.startswith("    //"):
-                        continue
-                    break
-
-                if line.src.startswith("    pha") and next_line.src.startswith("    pla"):
+                if line.src.startswith("    pla") and prev_line.src.startswith("    pha"):
                     line.src = "    // %s" % line.src[4:]
-                    next_line.src = "    // %s" % next_line.src[4:]
+                    prev_line.src = "    // %s" % prev_line.src[4:]
+                prev_line = line
+
+        # optimise sta, lda
+        for block in self.block_iterator(code_lines):
+            prev_line = DotWiz(src="")
+            for line in block:
+                if line.src.replace("lda", "sta") == prev_line.src:
+                    line.src = "    // %s" % line.src[4:]
+                prev_line = line
+
 
         return code_lines
 
     def line_iterator(self):
-        line_nr = 0
-        for node in self.nodes:
-            for line in node.src:
+        for line_nr, line in enumerate(self.code):
+            if not line.strip().startswith("//"):
                 yield DotWiz(nr=line_nr, src=line)
-                line_nr += 1
 
     def block_iterator(self, lines):
         block = []
@@ -83,18 +87,13 @@ if __name__ == "__main__":
     print(ast.tree())
 
     compiler = Compiler(shared, ast, local)
-    nodes = compiler.compile()
+    code = compiler.compile()
 
-    optimizer = Optimizer(nodes)
+    optimizer = Optimizer(code)
     code = optimizer.optimize()
     
     print("===SOURCE CODE===")
     with open("test.asm", "w") as f:
-        f.write("// code segment\n")
         for line in code:
             # print("%4d %s" % (line.nr, line.src))
             f.write("%s\n" % line.src)
-
-        f.write("// variable segment\n")
-        for ident, node in variables.items():
-            f.write("\n".join(node.src))

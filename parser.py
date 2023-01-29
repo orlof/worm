@@ -124,7 +124,7 @@ def propagate_type(node, names):
                 node.return_type = "LONG"
             elif "WORD" in (left, right):
                 if left != "WORD":
-                    node.left = AstNode(type="CWORD", return_type="WOR", value=node.left)
+                    node.left = AstNode(type="CWORD", return_type="WORD", value=node.left)
                 if right != "WORD":
                     node.right = AstNode(type="CWORD", return_type="WORD", value=node.right)
                 node.return_type = "WORD"
@@ -146,6 +146,20 @@ def propagate_type(node, names):
 
         elif node.type in operators_comparison + ["AND", "OR", "PEEK"]:
             node.return_type = "BYTE"
+
+        elif node.type == "CALL":
+            node.return_type =  names[node.name.value].return_type
+            for n in range(len(node.args)):
+                arg_expr, arg_def = node.args[n], names[node.name.value].args[n]
+                arg_type = propagate_type(arg_expr, names)
+                if arg_type != arg_def.return_type:
+                    node.args[n] = AstNode(type="C%s" % arg_def.return_type, return_type=arg_def.return_type, value=node.args[n])
+
+        elif node.type == "RETURN":
+            node.return_type =  names["_RETURN_"].return_type
+            expr_type = propagate_type(node.value, names)
+            if expr_type != node.return_type:
+                node.value = AstNode(type="C%s" % node.return_type, return_type=node.return_type, value=node.expr)
         
         else:
             node.return_type = "???"
@@ -154,6 +168,7 @@ def propagate_type(node, names):
 
 def create_variables(node):
     for i in node.value:
+    #for i in node:
         if i.type == "IDENT":
             yield AstNode(type="DEF_VAR", name=i.value,
                 return_type=node.return_type, 
@@ -277,7 +292,8 @@ class Parser:
                 for var in create_variables(node):
                     self.shared[var.name] = var
             elif node.type == "DEF_FUN":
-                for var in create_variables(node._local):
+                self.shared[node.name] = node
+                for var in node._local:
                     node.local[var.name] = var
         for node in self._local[0]:
             for var in create_variables(node):
@@ -287,7 +303,7 @@ class Parser:
         names.update(self.local)
         propagate_type(self.ast, names)
 
-        for k, v in self.local.items():
+        for k, v in self.shared.items():
             if v.type == "DEF_FUN":
                 names = self.shared.copy()
                 names.update(v.local)
@@ -343,15 +359,23 @@ class Parser:
                             raise SyntaxError("argument missing ]")
                         self.advance()
                     else:
-                        arg_size = AstNode(type="NUMERIC", value=1)
-                    node.args.append(AstNode(type=arg_type, name=arg_name, size=arg_size))
+                        arg_size = 1
+                    node.args.append(AstNode(type="DEF_VAR", 
+                        return_type=arg_type, name=arg_name, size=arg_size,
+                        index_type="BYTE", initializer=[0]
+                    ))
                     if self.token == ",":
                         self.advance()
+
+                self.advance() # )
 
                 # CREATE NEW SCOPE
                 self._local.append(AstList())
                 # ADD RETURN VALUE TO LOCALS
-                self._local[-1].append(AstNode(type=node.return_type, name=node.name, size=node.return_len))
+                self._local[-1].append(AstNode(type="DEF_VAR", 
+                    return_type=node.return_type, name="_RETURN_", 
+                    size=node.size, initializer=[0]*node.size
+                ))
                 # ADD ARGS TO LOCALS
                 for n in node.args:
                     self._local[-1].append(n)
@@ -390,6 +414,10 @@ class Parser:
             self.advance()
             value = self.expr()
             return AstNode(type="POKE", addr=addr, value=value)
+
+        elif self.token == "RETURN":
+            self.advance()
+            return AstNode(type="RETURN", value=self.expr())
 
         elif self.token == "WHILE":
             self.advance()
@@ -586,7 +614,7 @@ class Parser:
                 if self.token == ")":
                     left = AstNode(type="CALL", name=left, args=AstList())
                 else:
-                    left = AstNode(type="CALL", name=left, args=self.arglist_comma())
+                    left = AstNode(type="CALL", name=left, args=self.expr_list())
 
                 if self.token != ")":
                     raise SyntaxError("invalid syntax")
