@@ -8,7 +8,7 @@ ZP_W0 = 251
 
 def format_data(name, data):
     rows = ["%s:" % name]
-    data = ["0x{:02x}".format(x) for x in data]
+    data = ["0x{:02x}".format(x).replace("0x", "$") for x in data]
     for index in range(0, len(data), 16):
         rows.append("    .byte %s" % ", ".join(data[index:index+16]))
     return rows
@@ -48,12 +48,18 @@ class Compiler:
         return self.code
 
     def compile_function(self, ast):
-        code = [ "%s: {" ]
+        code = [ 
+            "%s: {" % ast.name,
+            "// CODE" 
+        ]
         
         for node in ast.body:
             code += self.compile_code(node)
 
-        code += [ "    rts"]
+        code += [ 
+            "    rts",
+            "// VARIABLES"
+        ]
 
         for name, node in ast.local.items():
             code += self.compile_variable(node)
@@ -102,19 +108,21 @@ class Compiler:
         
         elif node.type == "CALL":
             code = []
-            for arg in node.args:
+            for n in range(len(node.args)):
+                arg = node.args[n]
+                arg_def = self.shared[node.name].args[n]
                 code += self.compile_expr(arg)
                 if arg.return_type == "BYTE":
                     code += [
-                        "    pla"
-                        "    sta %s.%s" % (node.name, arg.value),
+                        "    pla",
+                        "    sta %s.%s" % (node.name, arg_def.name),
                     ]
                 elif arg.return_type == "WORD":
                     code += [
-                        "    pla"
-                        "    sta %s.%s" % (node.name, arg.value),
-                        "    pla"
-                        "    sta %s.%s+1" % (node.name, arg.value),
+                        "    pla",
+                        "    sta %s.%s" % (node.name, arg_def.name),
+                        "    pla",
+                        "    sta %s.%s+1" % (node.name, arg_def.name),
                     ]
                 else:
                     raise NotImplementedError()
@@ -131,7 +139,7 @@ class Compiler:
                     self.compile_expr(node.value) +
                     [
                         "    pla",
-                        "    sta _RETURN_"
+                        "    sta _RETURN_",
                         "    rts"
                     ]
                 )
@@ -140,7 +148,7 @@ class Compiler:
                     self.compile_expr(node.value) +
                     [
                         "    pla",
-                        "    sta _RETURN_"
+                        "    sta _RETURN_",
                         "    pla",
                         "    sta _RETURN_+1",
                         "    rts"
@@ -181,7 +189,9 @@ class Compiler:
         elif node.type == "END":
             return (
                 [
-                    "// THE END",
+                    "    rts",
+                    "// MAIN END",
+                    "",
                 ]
             )
            
@@ -357,19 +367,21 @@ class Compiler:
 
         elif node.type == "CALL":
             code = []
-            for arg in node.args:
+            for n in range(len(node.args)):
+                arg = node.args[n]
+                arg_def = self.shared[node.name].args[n]
                 code += self.compile_expr(arg)
                 if arg.return_type == "BYTE":
                     code += [
-                        "    pla"
-                        "    sta %s.%s" % (node.name, arg.value),
+                        "    pla",
+                        "    sta %s.%s" % (node.name, arg_def.name),
                     ]
                 elif arg.return_type == "WORD":
                     code += [
-                        "    pla"
-                        "    sta %s.%s" % (node.name, arg.value),
-                        "    pla"
-                        "    sta %s.%s+1" % (node.name, arg.value),
+                        "    pla",
+                        "    sta %s.%s" % (node.name, arg_def.name),
+                        "    pla",
+                        "    sta %s.%s+1" % (node.name, arg_def.name),
                     ]
                 else:
                     raise NotImplementedError()

@@ -148,9 +148,9 @@ def propagate_type(node, names):
             node.return_type = "BYTE"
 
         elif node.type == "CALL":
-            node.return_type =  names[node.name.value].return_type
+            node.return_type =  names[node.name].return_type
             for n in range(len(node.args)):
-                arg_expr, arg_def = node.args[n], names[node.name.value].args[n]
+                arg_expr, arg_def = node.args[n], names[node.name].args[n]
                 arg_type = propagate_type(arg_expr, names)
                 if arg_type != arg_def.return_type:
                     node.args[n] = AstNode(type="C%s" % arg_def.return_type, return_type=arg_def.return_type, value=node.args[n])
@@ -612,9 +612,9 @@ class Parser:
 
             if op == "(":
                 if self.token == ")":
-                    left = AstNode(type="CALL", name=left, args=AstList())
+                    left = AstNode(type="CALL", name=left.value, args=AstList())
                 else:
-                    left = AstNode(type="CALL", name=left, args=self.expr_list())
+                    left = AstNode(type="CALL", name=left.value, args=self.expr_list())
 
                 if self.token != ")":
                     raise SyntaxError("invalid syntax")

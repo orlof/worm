@@ -4,26 +4,34 @@
 *=2061
 {
 expr:
+    // byte literal 1 to stack
     // lda #1
     // pha
+    // WHILE
     lda #1 // optimized
     bne suite
     jmp exit
 suite:
+    // push byte value of color to stack
     lda color
     // pha
-    // pla    sta AstNode[3].color
-    jsr AstNode[3]
-    lda AstNode[3]._RETURN_
+    // pla
+    sta inc.b
+    jsr inc
+    lda inc._RETURN_
     // pha
+    // assign to byte ident
     // pla
     sta color
+    // push byte value of color to stack
     // lda color
     pha
+    // word literal 53280 to stack
     // lda #208
     // pha
     // lda #32
     // pha
+    // POKE expr, expr
     lda #32 // optimized
     sta ZP_W0
     lda #208 // optimized
@@ -34,11 +42,20 @@ suite:
     jmp expr
 exit:
 }
-%s: {
+    rts
+// MAIN END
+
+inc: {
+// CODE
+    // eval left side of +
+    // push byte value of b to stack
     lda b
     pha
+    // eval right side of +
+    // byte literal 1 to stack
     // lda #1
     // pha
+    // byte l + r
     lda #1 // optimized
     sta ZP_W0
     pla
@@ -46,12 +63,14 @@ exit:
     adc ZP_W0
     // pha
     // pla
-    sta _RETURN_    rts
+    sta _RETURN_
     rts
+    // rts
+// VARIABLES
 _RETURN_:
-    .byte 0x00
+    .byte $00
 b:
-    .byte 0x00
+    .byte $00
 }
 color:
-    .byte 0x00
+    .byte $00

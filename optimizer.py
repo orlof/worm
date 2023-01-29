@@ -23,36 +23,45 @@ class Optimizer:
                     lda_line, pha_line = stack.pop()
 
                     if lda_line.src.startswith("    lda #"):
-                        line.src = "%s // optimized" % lda_line.src
-                        lda_line.src = "    // %s" % lda_line.src[4:]
-                        pha_line.src = "    // %s" % pha_line.src[4:]
+                        self.code[line.nr] = "%s // optimized" % lda_line.src
+                        self.code[lda_line.nr] = "    // %s" % lda_line.src[4:]
+                        self.code[pha_line.nr] = "    // %s" % pha_line.src[4:]
 
-                if not line.src.startswith("    //"):
-                    prev_line = line
+                prev_line = line
 
         # optimise pha, pla
+        code_lines = list(self.line_iterator())
         for block in self.block_iterator(code_lines):
             prev_line = DotWiz(src="")
             for line in block:
                 if line.src.startswith("    pla") and prev_line.src.startswith("    pha"):
-                    line.src = "    // %s" % line.src[4:]
-                    prev_line.src = "    // %s" % prev_line.src[4:]
+                    self.code[line.nr] = "    // %s" % line.src[4:]
+                    self.code[prev_line.nr] = "    // %s" % prev_line.src[4:]
                 prev_line = line
 
         # optimise sta, lda
+        code_lines = list(self.line_iterator())
         for block in self.block_iterator(code_lines):
             prev_line = DotWiz(src="")
             for line in block:
-                if line.src.replace("lda", "sta") == prev_line.src:
-                    line.src = "    // %s" % line.src[4:]
+                if "lda" in line.src and line.src.replace("lda", "sta") == prev_line.src:
+                    self.code[line.nr] = "    // %s" % line.src[4:]
                 prev_line = line
 
+        # optimise rts, rts
+        code_lines = list(self.line_iterator())
+        for block in self.block_iterator(code_lines):
+            prev_line = DotWiz(src="")
+            for line in block:
+                if "rts" in line.src and "rts" in prev_line.src:
+                    self.code[line.nr] = "    // %s" % line.src[4:]
+                prev_line = line
 
-        return code_lines
+        return self.code
 
     def line_iterator(self):
         for line_nr, line in enumerate(self.code):
-            if not line.strip().startswith("//"):
+            if line and (not line.strip().startswith("//")):
                 yield DotWiz(nr=line_nr, src=line)
 
     def block_iterator(self, lines):
@@ -96,4 +105,4 @@ if __name__ == "__main__":
     with open("test.asm", "w") as f:
         for line in code:
             # print("%4d %s" % (line.nr, line.src))
-            f.write("%s\n" % line.src)
+            f.write("%s\n" % line)
