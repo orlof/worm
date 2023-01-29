@@ -1,0 +1,22 @@
+DEF_VAR
+ name="foo"
+ return_type="BYTE"
+ size=1
+ initializer=[0]
+ index_type="BYTE"
+
+DEF_FUN
+ type="DEF_FUN"
+ name="foo"
+ return_type="BYTE"
+ size=1
+ args=AstList
+ local=AstDict
+ body=AstList
+
+CALL
+ type="CALL"
+ name="inc"
+ args=AstList
+ return_type="BYTE"
+ 
