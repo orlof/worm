@@ -30,3 +30,19 @@ IF
  _else: AstNode
   type="ELSE"
   body=AstNode
+
+
+DATA AS BYTE
+string
+word
+int
+long
+@ var def
+fast
+memcpy
+memset
+for
+break / continue
+asm
+interrupts
+switch

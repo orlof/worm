@@ -501,7 +501,7 @@ class Compiler:
             cvar = self.names[node.left.value]
             right = self.compile_expr(node.right)
 
-            if cvar.type == "BYTE" and cvar.index_type == "BYTE":
+            if cvar.return_type == "BYTE" and cvar.index_type == "BYTE":
                 return (
                     right +
                     [
@@ -511,7 +511,7 @@ class Compiler:
                         "    pha"
                     ]
                 )
-            if cvar.type == "BYTE" and cvar.index_type == "WORD":
+            if cvar.return_type == "BYTE" and cvar.index_type == "WORD":
                 return (
                     right +
                     [
@@ -529,7 +529,7 @@ class Compiler:
                         "    pha",
                     ]
                 )
-            if cvar.type == "WORD" and cvar.index_type == "BYTE":
+            if cvar.return_type == "WORD" and cvar.index_type == "BYTE":
                 return (
                     right +
                     [
@@ -543,7 +543,7 @@ class Compiler:
                         "    pha",
                     ]
                 )
-            if cvar.type == "WORD" and cvar.index_type == "WORD":
+            if cvar.return_type == "WORD" and cvar.index_type == "WORD":
                 return (
                     right +
                     [

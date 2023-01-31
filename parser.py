@@ -800,9 +800,9 @@ class Parser:
         if self.token == "[":
             self.advance()
             if self.token == "]":
-                node = AstNode(type="ARRAY", value=AstList())
+                node = AstNode(type="LIST", value=AstList())
             else:
-                node = AstNode(type="ARRAY", value=self.expr_list())
+                node = AstNode(type="LIST", value=self.expr_list())
 
                 if self.token != "]":
                     raise SyntaxError("invalid syntax")

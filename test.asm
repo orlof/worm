@@ -7,24 +7,33 @@
     dec 1
     cli
 // PROGRAM CODE
-{ // BYTE *
-    // byte literal 32 to stack
-    // lda #32
+{ // BYTE +
+    // byte literal 1 to stack
+    // lda #1
     // pha
-    // push byte value of a to stack
-    // lda a
+    lda #1 // optimized
+    tay
+    // lda a,y
     // pha
-    lda a // optimized
+    // byte literal 1 to stack
+    // lda #1
+    // pha
+    // byte l + r
+    lda #1 // optimized
     sta ZP_W0
-    lda #32 // optimized
-    sta ZP_W0+1
-    jsr BYTE_MULTIPLY
-    // lda ZP_W0
-    // pha
+    lda a,y // optimized
+    clc
+    adc ZP_W0
+    pha
 }
-    // assign to byte ident
-    lda ZP_W0 // optimized
-    sta a
+    // byte literal 0 to stack
+    // lda #0
+    // pha
+    // byte[byte]=byte
+    lda #0 // optimized
+    tax
+    pla
+    sta a,x
 // POSTAMBLE
     sei
     inc 1
@@ -32,20 +41,5 @@
     rts
 // END
 
-BYTE_MULTIPLY: {
-    lda #0
-    ldx #$8
-    lsr ZP_W0
-loop:
-    bcc no_add
-    clc
-    adc ZP_W0+1
-no_add:
-    ror
-    ror ZP_W0
-    dex
-    bne loop
-    sta ZP_W0+1    rts
-}
 a:
-    .byte $05
+    .byte $01, $02, $03

@@ -12,7 +12,7 @@ reserved_words = {
     "for", "if", "else", "while", "break", "continue", "return",
     "asm", 
     "def", "struct",
-    "ubyte", "byte", "word", "uword", "long", "ulong", "boolean",
+    "byte", "word", "int", "long", "string",
     "switch", "case",
     "fast", "shared",
     "const", "poke", "peek"
@@ -88,6 +88,7 @@ class Name:
 class Lexer:
     def __init__(self, filename):
         self.filename = filename
+        self.depth = []
 
     def scan(self):
         with open(self.filename, "r") as f:
@@ -114,7 +115,8 @@ class Lexer:
     def next(self, text):
         for item in text:
             if type(item) == tuple:
-                yield item
+                if not self.depth or item[0] not in ("INDENT", "DEDENT"):
+                    yield item
                 continue
         
             buf = []
@@ -138,6 +140,11 @@ class Lexer:
                 #    buf.append(c)
 
                 elif is_operator(buf):
+                    if c in "([{":
+                        self.depth += buf
+                    if c in ")]}":
+                        if not self.depth or c != self.depth.pop():
+                            raise SyntaxError("Mismatch () [] or {}")
                     yield ("".join(buf), None)
                     buf = [c] if c else []
                 

@@ -24,5 +24,9 @@
 #    byte x = 0, y = 0
 #    POKE 1024 + 40 * y + x, char
 
-byte a=5
-a=32*a
+byte a=[
+    1,
+    2,
+    3
+]
+a[0]=a[1]+1
