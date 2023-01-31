@@ -140,9 +140,9 @@ class Lexer:
                 #    buf.append(c)
 
                 elif is_operator(buf):
-                    if c in "([{":
+                    if buf in ["(", "[", "{"]:
                         self.depth += buf
-                    if c in ")]}":
+                    if buf in [")", "]", "}"]:
                         if not self.depth or c != self.depth.pop():
                             raise SyntaxError("Mismatch () [] or {}")
                     yield ("".join(buf), None)

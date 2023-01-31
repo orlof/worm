@@ -24,9 +24,23 @@
 #    byte x = 0, y = 0
 #    POKE 1024 + 40 * y + x, char
 
-byte a=[
-    1,
-    2,
-    3
-]
-a[0]=a[1]+1
+#byte b0
+#byte b1=1
+#byte b2[2]
+#byte b3=[1,2]
+#string s4
+#string s5="a"
+#string s6[2]
+#string s7=["a","ab"]
+#string[5] s0
+#string[5] s1[3]
+#string[5] s2="Hey"
+#string[5] s3=["ab","b"]
+byte f1()
+  return 1
+byte f2[10](byte a[10])
+  return a
+#string f()
+#string[5] f()
+#string f[10]()
+#string[5] f[10]()

@@ -7,6 +7,8 @@ from parser import Parser, AstNode, AstList
 ZP_W0 = 251
 
 def format_data(name, data):
+    if type(data) == int:
+        data = [data]
     rows = ["%s:" % name]
     data = ["0x{:02x}".format(x).replace("0x", "$") for x in data]
     for index in range(0, len(data), 16):
@@ -396,16 +398,25 @@ class Compiler:
             return nodes
 
     def compile_variable(self, node):
+        if node.type != "DEF_VAR":
+            raise NotImplementedError()
+
         if node.return_type == "BYTE":
             # byte a
             return list(format_data(node.name, node.initializer))
-        elif node.type == "WORD":
+        elif node.return_type == "WORD":
             # word a
             return (
                 ["%s:" % node.name] +
                 format_data("%s_lo" % node.name, map(lambda x: (x & 0xff), node.initializer)) +
                 format_data("%s_hi" % node.name, map(lambda x: (x >> 8) & 0xff, node.initializer))
             )
+        elif node.return_type == "STRING":
+            result = ["%s:" % node.name]
+            for element in node.initializer:
+                result += ["    .byte %d" % element[0]]
+                result += ["    .text \"%s\"" % element[1]]
+            return result
         else:
             raise NotImplementedError()
 

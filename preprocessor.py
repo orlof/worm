@@ -12,19 +12,19 @@ def preprocess_literal_strings(text):
                 # start quote
                 found = c
                 if buf_line:
-                    buf.append(("STR", "".join(buf_line)))
+                    buf.append("".join(buf_line))
                 buf_line = []
                 continue
             elif c == found:
                 # end quote
                 found = ""
-                buf.append(("STR", "".join(buf_line)))
+                buf.append(("LITERAL", "".join(buf_line)))
                 buf_line = []
                 continue
             buf_line.append(c)
         if buf_line:
             if found:
-                buf.append(("STR", "".join(buf_line)))
+                buf.append(("LITERAL", "".join(buf_line)))
             else:
                 buf.append("".join(buf_line))
     return buf

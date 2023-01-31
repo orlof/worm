@@ -7,33 +7,6 @@
     dec 1
     cli
 // PROGRAM CODE
-{ // BYTE +
-    // byte literal 1 to stack
-    // lda #1
-    // pha
-    lda #1 // optimized
-    tay
-    // lda a,y
-    // pha
-    // byte literal 1 to stack
-    // lda #1
-    // pha
-    // byte l + r
-    lda #1 // optimized
-    sta ZP_W0
-    lda a,y // optimized
-    clc
-    adc ZP_W0
-    pha
-}
-    // byte literal 0 to stack
-    // lda #0
-    // pha
-    // byte[byte]=byte
-    lda #0 // optimized
-    tax
-    pla
-    sta a,x
 // POSTAMBLE
     sei
     inc 1
@@ -41,5 +14,31 @@
     rts
 // END
 
+f1: {
+// CODE
+    // byte literal 1 to stack
+    // lda #1
+    // pha
+    lda #1 // optimized
+    sta _RETURN_
+    rts
+    // rts
+// VARIABLES
+_RETURN_:
+    .byte $00
+}
+f2: {
+// CODE
+    // push byte value of a to stack
+    // lda a
+    // pha
+    lda a // optimized
+    sta _RETURN_
+    rts
+    // rts
+// VARIABLES
+_RETURN_:
+    .byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
 a:
-    .byte $01, $02, $03
+    .byte $00
+}

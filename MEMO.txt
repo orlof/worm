@@ -32,8 +32,14 @@ IF
   body=AstNode
 
 
-DATA AS BYTE
 string
+  byte a = [1,2,3]
+  string[20] b
+  string[20] b[5]
+  string[20] b="Hello World"
+  string[20] b=["Hello", "World"]
+
+DATA AS BYTE
 word
 int
 long
