@@ -183,7 +183,7 @@ class Parser:
                         arg_size = 1
                     node.args.append(AstNode(type="DEF_VAR", 
                         return_type=arg_type, name=arg_name, size=arg_size,
-                        index_type="BYTE", initializer=[0]
+                        index_type="BYTE", initializer=0 if arg_size == 0 else [0] * arg_size
                     ))
                     if self.token == ",":
                         self.advance()

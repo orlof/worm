@@ -36,11 +36,18 @@
 #string[5] s1[3]
 #string[5] s2="Hey"
 #string[5] s3=["ab","b"]
+
 byte f1()
   return 1
-byte f2[10](byte a[10])
+
+byte f2(byte a)
   return a
-#string f()
-#string[5] f()
-#string f[10]()
-#string[5] f[10]()
+
+string f()
+    return "ABC"
+string[5] f()
+    return "ABC"
+
+string[32] join(string[16] left, string[16] right)
+    return left + right
+

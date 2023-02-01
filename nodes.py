@@ -13,10 +13,11 @@ class Node(DotWiz):
 
         subtree = []
         for key, value in self.items():
-            if isinstance(value, (Node, NodeList, NodeDict)) and not key.startswith("_"):
-                subtree.append("%s%s:\n%s" % (sub, key, value.tree(indent + 2)))
-            else:
-                subtree.append("%s%s: %s" % (sub, key, value))
+            if not key.startswith("_"):
+                if isinstance(value, (Node, NodeList, NodeDict)):
+                    subtree.append("%s%s:\n%s" % (sub, key, value.tree(indent + 2)))
+                else:
+                    subtree.append("%s%s: %s" % (sub, key, value))
 
         return "%s%s\n%s" % (sub, self.__class__.__name__, "\n".join(subtree))
 
