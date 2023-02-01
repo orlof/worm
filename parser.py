@@ -32,8 +32,9 @@ class Parser:
     def value(self):
         return self.tokens[self.pos][1]
 
-    def advance(self):
+    def advance(self, accepted=None):
         self.pos +=  1
+        assert accepted==None or self.token == accepted
 
     def parse(self):
         while True:
@@ -58,8 +59,8 @@ class Parser:
                     raise SyntaxError()
             else:
                 stmt = self.stmt()
-                if stmt.type != "PASS":
-                    self.ast.append(self.stmt())
+                if stmt:
+                    self.ast.append(stmt)
 
         # OPTIMIZE CONSTANTS
         for k, v in self.constants.items():
@@ -72,16 +73,21 @@ class Parser:
 
         # CONVERT LOCAL AND SHARED LISTS TO DICTS
         for node in self._shared:
-            if node.type == "DEF_VAR":
-                for var in create_variables(node):
-                    self.shared[var.name] = var
-            elif node.type == "DEF_FUN":
-                self.shared[node.name] = node
-                for var in node._local:
-                    node.local[var.name] = var
+            assert node.type == "VARIABLE_DECLARATION"
+            for def_var in process_variable_declaration(node):
+                self.shared[def_var.name] = init_variable(def_var)
+
         for node in self._local[0]:
-            for var in create_variables(node):
-                self.local[var.name] = var
+            assert node.type == "VARIABLE_DECLARATION":
+            for def_var in process_variable_declaration(node):
+                self.local[def_var.name] = init_variable(def_var)
+
+        for node in self.shared.values():
+            if node.type == "DEF_FUN":
+                for var in node._local:
+                    assert var == "DEF_VAR_TYPE"
+                    for def_var in process_variable_declaration(var):
+                        node.local[def_var.name] = def_var
 
         names = self.shared.copy()
         names.update(self.local)
@@ -107,95 +113,70 @@ class Parser:
         return suite        
 
     def stmt(self):
-        if self.token == "STRING":
-            self.advance()
-            capacity = 0
-            if self.token == "[":
-                self.advance()
-                # string max length defined
-                if self.token != "NUMERIC":
-                    raise SyntaxError("String capacity must be defined in compile time")
-                capacity = self.value
-                self.advance()
-                if self.token != "]":
-                    raise SyntaxError("Missing ]")
-                self.advance()
-            
-
-
-            self._local[-1].append(AstNode(type="DEF_VAR", 
-                return_type="STRING", capacity=capacity,
-                value=self.simple_assignment_list())
-            )
-            return AstNode(type="PASS")
-            
-        elif self.token in ("BYTE", "WORD"):
+        if self.token in ("BYTE", "WORD", "STRING"):
             token = self.token
             self.advance()
 
             MARK = self.pos
+
+            capacity = 0
+            if token == "STRING" and self.token == "[":
+                self.advance("NUMERIC")
+                capacity = self.value
+                self.advance("]")
+                self.advance()
 
             assert self.token == "IDENT"
 
             name = self.value
             self.advance()
 
-            size = 0
-            if self.token == "[":
-                # ARRAY
-                self.advance()
-                assert self.token == "NUMERIC"
-
-                size = self.value
-                self.advance()
-                assert self.token == "]"
-                self.advance()
-            
             if self.token == "(":
                 # FUNCTION DEFINITION
                 self.advance()
 
                 node = AstNode(type="DEF_FUN", name=name, 
                     return_type=token, 
-                    size=size, 
+                    capacity=capacity,
+                    size=1, 
                     args=AstList(),
                     _local=AstList(),
                     local=AstDict()
                 )
 
                 while self.token != ")":
-                    if self.token not in ("BYTE", "WORD"):
-                        raise SyntaxError("Unkown function argument type: %s" % self.token)
+                    assert self.token in ("BYTE", "WORD", "STRING")
+
                     arg_type = self.token
                     self.advance()
-                    if self.token != "IDENT":
-                        raise SyntaxError("No function argument name")
+
+                    arg_capacity = 0
+                    if token == "STRING" and self.token == "[":
+                        self.advance("NUMERIC")
+                        arg_capacity = self.value
+                        self.advance("]")
+                        self.advance()
+
+                    assert self.token == "IDENT"
                     arg_name = self.value
+
                     self.advance()
-                    if self.token == "[":
-                        self.advance()
-                        assert self.token == "NUMERIC"
-                        arg_size = self.value
-                        self.advance()
-                        assert self.token == "]"
-                        self.advance()
-                    else:
-                        arg_size = 1
                     node.args.append(AstNode(type="DEF_VAR", 
-                        return_type=arg_type, name=arg_name, size=arg_size,
-                        index_type="BYTE", initializer=0 if arg_size == 0 else [0] * arg_size
+                        return_type=arg_type, name=arg_name, 
+                        capacity=arg_capacity, size=1,
+                        index_type="BYTE"
                     ))
                     if self.token == ",":
                         self.advance()
 
-                self.advance() # )
+                self.advance()
 
                 # CREATE NEW SCOPE
                 self._local.append(AstList())
                 # ADD RETURN VALUE TO LOCALS
                 self._local[-1].append(AstNode(type="DEF_VAR", 
                     return_type=node.return_type, name="_RETURN_", 
-                    size=node.size, initializer=0 if node.size == 0 else [0] * node.size
+                    size=1
                 ))
                 # ADD ARGS TO LOCALS
                 for n in node.args:
@@ -206,12 +187,15 @@ class Parser:
                 node._local = self._local.pop()
                 
                 self._shared.append(node)
-                return AstNode(type="PASS")
+                return None
 
             else:
                 # VARIABLE DEFINITION
                 self.pos = MARK
-                self._local[-1].append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
+                self._local[-1].append(AstNode(type="DEF_VAR", 
+                    return_type=token, 
+                    value=self.simple_assignment_list()
+                ))
                 return None
 
         elif self.token == "SHARED":
@@ -222,7 +206,7 @@ class Parser:
                 #for n in create_variables(AstNode(return_type=token, value=self.simple_assignment_list())):
                 #    self.shared[n.name] = n
                 self._shared.append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
-                return AstNode(type="PASS")
+                return None
             else:
                 raise NotImplemented()
 

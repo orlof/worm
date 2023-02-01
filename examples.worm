@@ -40,14 +40,14 @@
 byte f1()
   return 1
 
-byte f2(byte a)
-  return a
+#byte f2(byte a)
+#  return a
 
-string f()
-    return "ABC"
-string[5] f()
-    return "ABC"
+#string f()
+#    return "ABC"
+#string[5] f()
+#    return "ABC"
 
-string[32] join(string[16] left, string[16] right)
-    return left + right
+#string[32] join(string[16] left, string[16] right)
+#    return left + right
 

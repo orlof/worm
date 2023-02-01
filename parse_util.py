@@ -164,23 +164,25 @@ def propagate_type(node, names):
 
     return node.return_type
 
-def create_variables(node):
-    for i in node.value:
-        if i.type == "IDENT":
-            if node.return_type == "STRING":
+def process_variable_declaration(dec_node):
+    assert dec_node.type == "VARIABLE_DECLARATION"
+    
+    for var_node in dec_node.value:
+        if var_node.type == "IDENT":
+            if dec_node.return_type == "STRING":
                 # string[5] s
-                node.capacity = node.capacity or DEFAULT_STRING_CAPACITY
-                yield AstNode(type="DEF_VAR", name=i.value,
-                    return_type=node.return_type, 
+                dec_node.capacity = dec_node.capacity or DEFAULT_STRING_CAPACITY
+                yield AstNode(type="DEF_VAR", name=var_node.value,
+                    return_type=dec_node.return_type, 
                     index_type="BYTE",
                     size=1, 
-                    capacity=node.capacity,
-                    initializer=[(0, " " * node.capacity)]
+                    capacity=dec_node.capacity,
+                    initializer=[(0, " " * dec_node.capacity)]
                 )
-            elif node.return_type == "BYTE":
+            elif dec_node.return_type == "BYTE":
                 # byte b
-                yield AstNode(type="DEF_VAR", name=i.value,
-                    return_type=node.return_type, 
+                yield AstNode(type="DEF_VAR", name=var_node.value,
+                    return_type=dec_node.return_type, 
                     index_type="BYTE",
                     size=1, 
                     initializer=[0]
@@ -188,102 +190,95 @@ def create_variables(node):
             else:
                 raise NotImplementedError()
 
-        elif i.type == "SUBSCRIPTION":
-            if i.left.type != "IDENT" or i.right.type != "NUMERIC":
-                raise SyntaxError("Syntax error in definition")
-            if not (0 <= i.right.value <= 65535):
-                raise SyntaxError("Out of bounds")
+        elif var_node.type == "SUBSCRIPTION":
+            assert var_node.left.type == "IDENT" and var_node.right.type == "NUMERIC":
+            assert 0 <= var_node.right.value <= 65535
 
-            if node.return_type == "STRING":
+            if dec_node.return_type == "STRING":
                 # string[5] s[3]
-                node.capacity = node.capacity or DEFAULT_STRING_CAPACITY
-                yield AstNode(type="DEF_VAR", name=i.left.value,
-                    return_type=node.return_type, 
-                    index_type="BYTE" if i.right.value <= 256 else "WORD", 
-                    size=i.right.value,
-                    capacity=node.capacity,
-                    initializer=[(0, " " * node.capacity) for _ in range(i.right.value)]
+                dec_node.capacity = dec_node.capacity or DEFAULT_STRING_CAPACITY
+                yield AstNode(type="DEF_VAR", name=var_node.left.value,
+                    return_type=dec_node.return_type, 
+                    index_type="BYTE" if var_node.right.value <= 256 else "WORD", 
+                    size=var_node.right.value,
+                    capacity=dec_node.capacity,
+                    initializer=[(0, " " * dec_node.capacity) for _ in range(var_node.right.value)]
                 )
-            elif node.return_type == "BYTE":
+            elif dec_node.return_type == "BYTE":
                 # byte b[3]
-                yield AstNode(type="DEF_VAR", name=i.left.value, 
-                    return_type=node.return_type, 
-                    index_type="BYTE" if i.right.value <= 256 else "WORD", 
-                    size=i.right.value,
-                    initializer=[0] * i.right.value
+                yield AstNode(type="DEF_VAR", name=var_node.left.value, 
+                    return_type=dec_node.return_type, 
+                    index_type="BYTE" if var_node.right.value <= 256 else "WORD", 
+                    size=var_node.right.value,
+                    initializer=[0] * var_node.right.value
                 )
             else:
                 raise NotImplementedError()
 
-        elif i.type == "=":
-            if i.left.type != "IDENT":
-                raise SyntaxError("Syntax error in definition")
+        elif var_node.type == "=":
+            assert var_node.left.type == "IDENT"
 
-            if node.return_type == "STRING":
-                if i.right.type == "LITERAL":
+            if dec_node.return_type == "STRING":
+                if var_node.right.type == "LITERAL":
                     # string s="a"
-                    node.capacity = node.capacity or len(i.right.value)
+                    dec_node.capacity = dec_node.capacity or len(var_node.right.value)
 
-                    value = i.right.value
-                    length = min(len(value), node.capacity)
-                    initializer = [(length, value[:length].ljust(node.capacity, " "))]
-                    yield AstNode(type="DEF_VAR", name=i.left.value,
-                        return_type=node.return_type, 
+                    value = var_node.right.value
+                    length = min(len(value), dec_node.capacity)
+                    initializer = [(length, value[:length].ljust(dec_node.capacity, " "))]
+                    yield AstNode(type="DEF_VAR", name=var_node.left.value,
+                        return_type=dec_node.return_type, 
                         index_type="BYTE",
                         size=1, 
-                        capacity=node.capacity,
+                        capacity=dec_node.capacity,
                         initializer=initializer
                     )
-                elif i.right.type == "LIST":
+                elif var_node.right.type == "LIST":
                     # string[5] s=["a", "b"]
-                    for val in i.right:
-                        if val.type != "LITERAL":
-                            raise SyntaxError("only string literals allowed")
+                    assert all([n.type == "LITERAL" for n in vr_node.right])
 
-
-                    node.capacity = node.capacity or max([len(val.value) for val in i.right])
+                    dec_node.capacity = dec_node.capacity or max([len(val.value) for val in var_node.right])
 
                     initializers = []
-                    for val in i.right:
-                        length = min(len(val.value), node.capacity)
-                        initializer = [(length, val.value[:length].ljust(node.capacity, " "))]
+                    for val in var_node.right:
+                        length = min(len(val.value), dec_node.capacity)
+                        initializer = [(length, val.value[:length].ljust(dec_node.capacity, " "))]
                         initializers += initializer
 
-                    yield AstNode(type="DEF_VAR", name=i.left.value,
-                        return_type=node.return_type, 
-                        index_type="BYTE" if len(i.right) <= 255 else "WORD",
-                        size=len(i.right), 
-                        capacity=node.capacity,
+                    yield AstNode(type="DEF_VAR", name=var_node.left.value,
+                        return_type=dec_node.return_type, 
+                        index_type="BYTE" if len(var_node.right) <= 255 else "WORD",
+                        size=len(var_node.right), 
+                        capacity=dec_node.capacity,
                         initializer=initializers
                     )
                 else:
                     raise NotImplementedError()
 
-            elif node.return_type == "BYTE":
+            elif dec_node.return_type == "BYTE":
                 # byte b=1
-                if i.right.type == "NUMERIC":
-                    if not (0 <= i.right.value <= 255):
-                        raise SyntaxError("Out of bounds: %s" % (i.name))
+                if var_node.right.type == "NUMERIC":
+                    assert 0 <= var_node.right.value <= 255
 
-                    yield AstNode(type="DEF_VAR", name=i.left.value,
-                        return_type=node.return_type, 
+                    yield AstNode(type="DEF_VAR", name=var_node.left.value,
+                        return_type=dec_node.return_type, 
                         index_type="BYTE",
                         size=1, 
-                        initializer=[i.right.value]
+                        initializer=[var_node.right.value]
                     )
-                elif i.right.type == "LIST":
+                elif var_node.right.type == "LIST":
                     # byte b=[1,2,3]
-                    values = [x.value for x in i.right]
-                    if not all([0 <= v <= 255 for v in values]):
-                        raise SyntaxError("Out of bounds: %s" % (i.left.value))
+                    values = [x.value for x in var_node.right]
+                    assert all([0 <= v <= 255 for v in values])
 
-                    yield AstNode(type="DEF_VAR", name=i.left.value,
-                        return_type=node.return_type,
+                    yield AstNode(type="DEF_VAR", name=var_node.left.value,
+                        return_type=dec_node.return_type,
                         index_type="BYTE" if len(values) <= 256 else "WORD",
                         size=len(values),
                         initializer=values,
                     )
             else:
-                raise SyntaxError("Unknown data type %s" % node.type)
+                raise SyntaxError("Unknown data type %s" % dec_node.type)
         else:
             raise SyntaxError("Syntax error in definition")
+

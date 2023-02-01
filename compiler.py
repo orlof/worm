@@ -398,8 +398,7 @@ class Compiler:
             return nodes
 
     def compile_variable(self, node):
-        if node.type != "DEF_VAR":
-            raise NotImplementedError()
+        assert node.type == "DEF_VAR"
 
         if node.return_type == "BYTE":
             # byte a
