@@ -1,4 +1,5 @@
 
+import hashlib
 from dotwiz import DotWiz
 
 from lexer import Lexer, operators_arithmetic, operators_comparison
@@ -11,13 +12,11 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
 
-        self._shared = AstList()
-        self._local = [AstList()]
-
         self.constants = AstDict()
+        self.literals = AstDict()
 
         self.shared = AstDict()
-        self.local = AstDict()
+        self.local = AstList([AstDict()])
         self.ast = AstList()
 
     @property
@@ -66,31 +65,18 @@ class Parser:
         for k, v in self.constants.items():
             v.optimize_constants(self.constants)
 
-        self._shared.optimize_constants(self.constants)
-        self._local[0].optimize_constants(self.constants)
-
+        self.shared.optimize_constants(self.constants)
+        self.local[0].optimize_constants(self.constants)
         self.ast.optimize_constants(self.constants)
 
-        # CONVERT LOCAL AND SHARED LISTS TO DICTS
-        for node in self._shared:
-            assert node.type == "VARIABLE_DECLARATION"
-            for def_var in process_variable_declaration(node):
-                self.shared[def_var.name] = init_variable(def_var)
+        # INITIALIZE VARIABLES
+        assert len(self.local) == 1
+        process_variables(self.local[0])
+        process_variables(self.shared)
 
-        for node in self._local[0]:
-            assert node.type == "VARIABLE_DECLARATION":
-            for def_var in process_variable_declaration(node):
-                self.local[def_var.name] = init_variable(def_var)
-
-        for node in self.shared.values():
-            if node.type == "DEF_FUN":
-                for var in node._local:
-                    assert var == "DEF_VAR_TYPE"
-                    for def_var in process_variable_declaration(var):
-                        node.local[def_var.name] = def_var
-
+        # verify code trees
         names = self.shared.copy()
-        names.update(self.local)
+        names.update(self.local[0])
         propagate_type(self.ast, names)
 
         for k, v in self.shared.items():
@@ -99,7 +85,7 @@ class Parser:
                 names.update(v.local)
                 propagate_type(v.body, names)
 
-        return self.shared, self.ast, self.local
+        return self.shared, self.literals, self.ast, self.local[0]
 
     def suite(self):
         if self.token != "INDENT":
@@ -117,14 +103,14 @@ class Parser:
             token = self.token
             self.advance()
 
-            MARK = self.pos
-
-            capacity = 0
+            capacity = AstNode(type="NUMERIC", value=0)
             if token == "STRING" and self.token == "[":
-                self.advance("NUMERIC")
-                capacity = self.value
-                self.advance("]")
                 self.advance()
+                capacity = self.expr()
+                assert self.token == "]"
+                self.advance()
+
+            MARK = self.pos
 
             assert self.token == "IDENT"
 
@@ -139,73 +125,62 @@ class Parser:
                     return_type=token, 
                     capacity=capacity,
                     size=1, 
-                    args=AstList(),
-                    _local=AstList(),
-                    local=AstDict()
+                    args = self.ast_arg_list(),
                 )
 
-                while self.token != ")":
-                    assert self.token in ("BYTE", "WORD", "STRING")
-
-                    arg_type = self.token
-                    self.advance()
-
-                    arg_capacity = 0
-                    if token == "STRING" and self.token == "[":
-                        self.advance("NUMERIC")
-                        arg_capacity = self.value
-                        self.advance("]")
-                        self.advance()
-
-                    assert self.token == "IDENT"
-                    arg_name = self.value
-
-                    self.advance()
-                    node.args.append(AstNode(type="DEF_VAR", 
-                        return_type=arg_type, name=arg_name, 
-                        capacity=arg_capacity, size=1,
-                        index_type="BYTE"
-                    ))
-                    if self.token == ",":
-                        self.advance()
-
+                assert self.token == ")"
                 self.advance()
 
                 # CREATE NEW SCOPE
-                self._local.append(AstList())
+                self.local.append(AstDict())
                 # ADD RETURN VALUE TO LOCALS
-                self._local[-1].append(AstNode(type="DEF_VAR", 
-                    return_type=node.return_type, name="_RETURN_", 
-                    size=1
-                ))
-                # ADD ARGS TO LOCALS
-                for n in node.args:
-                    self._local[-1].append(n)
+                self.local[-1]["_RETURN_"] = AstNode(type="AST_ARG", name="_RETURN_",
+                    return_type=node.return_type,
+                    capacity=node.capacity,
+                    size=1,
+                    index_type="NA",
+                    # CANNOT COMPUTE -> NO CAPACITY
+                    # initializer=[(0, " " * node.capacity)] if token=="STRING" else [0]
+                )
 
+                # ADD ARGS TO LOCALS
+                self.local[-1].update({node.name: node for node in node.args})
+                    
                 node.body = self.suite()
+
                 # STORE LOCALS TO FUNCTION and REMOVE SCOPE
-                node._local = self._local.pop()
+                node.local = self.local.pop()
                 
-                self._shared.append(node)
+                self.shared[node.name] = node
                 return None
 
             else:
                 # VARIABLE DEFINITION
                 self.pos = MARK
-                self._local[-1].append(AstNode(type="DEF_VAR", 
-                    return_type=token, 
-                    value=self.simple_assignment_list()
-                ))
+
+                for node in self.simple_assignment_list():
+                    name = node.value if node.type=="IDENT" else node.left.value
+                    self.local[-1][name] = AstNode(type="AST_VAR",
+                        name=name,
+                        return_type=token,
+                        capacity=capacity,
+                        ast=node,
+                    )
                 return None
 
         elif self.token == "SHARED":
             self.advance()
-            if self.token in ("BYTE", "WORD"):
+            if self.token in ("BYTE", "WORD", "STRING"):
                 token = self.token
                 self.advance()
-                #for n in create_variables(AstNode(return_type=token, value=self.simple_assignment_list())):
-                #    self.shared[n.name] = n
-                self._shared.append(AstNode(type="DEF_VAR", return_type=token, value=self.simple_assignment_list()))
+
+                for node in self.simple_assignment_list():
+                    self.local[-1][node.name] = AstNode(type="AST_VAR", 
+                        name=node.name.value if node.type=="IDENT" else node.left.value,
+                        return_type=token,
+                        capacity=capacity,
+                        ast=node,
+                    )
                 return None
             else:
                 raise NotImplemented()
@@ -268,6 +243,35 @@ class Parser:
             return self.assignment()
             #print("Not processed: %s, %s" % (self.token, self.value))
             #self.advance()
+
+    def ast_arg_list(self):
+        arg_list = AstList()
+        while self.token in ("BYTE", "WORD", "STRING"):
+            typedef = self.token
+            self.advance()
+
+            capacity = AstNode(type="NUMERIC", value=0)
+            if typedef == "STRING" and self.token == "[":
+                self.advance()
+                capacity = self.expr()
+                self.advance()
+
+            assert self.token == "IDENT"
+
+            name = self.value
+            self.advance()
+
+            arg_list.append(
+                AstNode(type="AST_ARG", name=name,
+                    return_type=typedef,
+                    capacity=capacity,
+                )
+            )
+
+            if self.token == ",":
+                self.advance()
+
+        return arg_list
 
     def simple_assignment_list(self):
         # a=1,b=2
@@ -540,9 +544,11 @@ class Parser:
             return node
 
         if self.token in ("NUMERIC", "LITERAL", "IDENT"):
-            token = self.token
-            value = self.value
+            node = AstNode(type=self.token, value=self.value)
+            if self.token == "LITERAL":
+                node.md5 = "STR_%s" % hashlib.md5(node.value.encode('utf-8')).hexdigest()
+                self.literals[node.md5] = node
             self.advance()
-            return AstNode(type=token, value=value)
+            return node
 
         raise SyntaxError("invalid syntax")

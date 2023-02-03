@@ -31,6 +31,7 @@ IF
   type="ELSE"
   body=AstNode
 
+PRIORITIES
 
 string
   byte a = [1,2,3]
@@ -52,3 +53,7 @@ break / continue
 asm
 interrupts
 switch
+
+RAJOITTEET
+- one dimensional arrays
+- no arrays in function arguments or return values

@@ -90,18 +90,20 @@ class Optimizer:
                 block = [line]
         if block:
             yield block
-
-
+            
 
 if __name__ == "__main__":
     lexer = Lexer("examples.worm")
     tokens = lexer.scan()
 
     parser = Parser(tokens)
-    shared, ast, local = parser.parse()
+    shared, literals, ast, local = parser.parse()
 
     print("=== SHARED ===")
     print(shared.tree())
+
+    print("=== LITERALS ===")
+    print(literals.tree())
 
     print("=== LOCAL ===")
     print(local.tree())
@@ -109,7 +111,7 @@ if __name__ == "__main__":
     print("=== AST ===")
     print(ast.tree())
 
-    compiler = Compiler(shared, ast, local)
+    compiler = Compiler(shared, literals, ast, local)
     code = compiler.compile()
 
     optimizer = Optimizer(code)

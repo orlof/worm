@@ -4,8 +4,49 @@
 #byte a[10] @ 0x400
 #byte a=[1,2,3]
 
-#CONST a = b + 1
+#CONST SIZE = b + 1
 #CONST b = 2
+
+#byte f0()
+#    return 1
+
+# add overflow checking
+# try parameters
+# implement +
+string[3] f()
+    RETURN "Foo"
+
+string[3] result
+result = f()
+
+#byte b0
+#byte b1[2]
+#byte b2=3
+#byte b3=[1,2,3]
+#string    s0
+#string[5] s1
+#string    s2[2]
+#string[5] s3[2]
+#string    s4="foo"
+#string    s5=["foo", "bar4"]
+#string[5] s6="foo"
+#string[5] s7="foobar"
+#string[5] s8=["foo", "foobar"]
+
+#byte b0
+#byte b1[SIZE]
+#byte b2=3
+#byte b3=[1,SIZE,3]
+#string    s0
+#string[SIZE] s1
+#string    s2[SIZE]
+#string[SIZE] s3[SIZE+SIZE]
+#string    s4="foo"
+#string    s5=["foo", "bar4"]
+#string[5] s6="foo"
+#string[5] s7="foobar"
+#string[5] s8=["foo", "foobar"]
+
 #CONST a = b
 #CONST b = c + 1
 #CONST c = 1
@@ -37,8 +78,8 @@
 #string[5] s2="Hey"
 #string[5] s3=["ab","b"]
 
-byte f1()
-  return 1
+#byte f1()
+#  return 1
 
 #byte f2(byte a)
 #  return a

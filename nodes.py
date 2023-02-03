@@ -73,7 +73,7 @@ class AstNode(Node):
             return self.type_in(self.left)
         else:
             raise SyntaxError("Unknown assignment target")
-
+    
     def optimize_constants(self, constants, used_constants=set()):
         if self.type == "CONST":
             if self.name in used_constants:
@@ -133,10 +133,20 @@ class AstList(NodeList):
             if isinstance(v, (AstNode, AstList, AstDict)):
                 v.optimize_constants(constants, used_constants)
 
+    def init_variables(self):
+        for v in self:
+            if isinstance(v, (AstNode, AstList, AstDict)):
+                v.init_variables()
+
 class AstDict(NodeDict):
     def optimize_constants(self, constants, used_constants=set()):
         for k, v in self.items():
             if isinstance(v, (AstNode, AstList, AstDict)):
                 v.optimize_constants(constants, used_constants)
+
+    def init_variables(self):
+        for k, v in self.items():
+            if isinstance(v, (AstNode, AstList, AstDict)):
+                v.init_variables()
 
 

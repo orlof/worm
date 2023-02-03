@@ -16,8 +16,9 @@ def format_data(name, data):
     return rows
 
 class Compiler:
-    def __init__(self, shared, ast, local):
+    def __init__(self, shared, literals, ast, local):
         self.shared = shared
+        self.literals = literals
         self.local = local
         self.ast = ast
 
@@ -44,11 +45,18 @@ class Compiler:
         for name, func in self.library.items():
             self.code += func
 
+        # COMPILE LITERALS
+        self.code += ["// LITERALS"]
+        for node in self.literals.values():
+            self.code += self.compile_literal(node)
+
         # COMPILE VARIABLES
+        self.code += ["// SHARED"]
         for name, node in self.shared.items():
             if node.type == "DEF_VAR":
                 self.code += self.compile_variable(node)
 
+        self.code += ["// MAIN LOCALS"]
         for name, node in self.local.items():
             self.code += self.compile_variable(node)
 
@@ -163,6 +171,15 @@ class Compiler:
                         "    rts"
                     ]
                 )
+            elif self.names["_RETURN_"].return_type == "STRING":
+                self.library["PULL"] = LIBRARY["PULL"]
+                return (
+                    self.compile_expr(node.value) +
+                    [
+                        "    LOAD(_RETURN_, ZP_W0)",
+                        "    jmp PULL",
+                    ]
+                )
             else:
                 raise NotImplementedError()
                 
@@ -202,16 +219,20 @@ class Compiler:
             return []
 
         elif node.type == "START":
+            self.library["LOAD"] = LIBRARY["LOAD"]
             return (
                 [
-                    "// PREAMBLE",
+                    "// CONSTANTS",
+                    ".const STACK = $fd",
                     ".const ZP_W0 = $fb",
+                    "// PREAMBLE",
                     "*=2048",
                     ".byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061",
                     "*=2061",
                     "    sei",
                     "    dec 1",
                     "    cli",
+                    "    LOAD($cfff, STACK)",
                     "// PROGRAM CODE",
                 ]
             )
@@ -323,12 +344,19 @@ class Compiler:
                         nodes += [
                             "    // assign to word ident",
                             "    pla",
-                            "    sta %s" % cvar.ident,
+                            "    sta %s" % cvar.name,
                             "    pla",
-                            "    sta %s+1" % cvar.ident,
+                            "    sta %s+1" % cvar.name,
+                        ]
+                    elif cvar.return_type == "STRING":
+                        self.library["PULL"] = LIBRARY["PULL"]
+                        nodes += [
+                            "    // assign string",
+                            "    LOAD(%s, ZP_W0)" % cvar.name,
+                            "    jsr PULL",
                         ]
                     else:
-                        raise SyntaxError("Unknown ident type: %s" % cvar.type)
+                        raise NotImplementedError()
 
                 elif lnode.type == "SUBSCRIPTION":
                     cvar = self.names[lnode.left.value]
@@ -397,6 +425,15 @@ class Compiler:
                         ]
             return nodes
 
+    def compile_literal(self, node):
+        assert node.type == "LITERAL"
+
+        return (
+            ["%s:" % node.md5]+
+            ["    .byte %d" % len(node.value)] +
+            ["    .text \"%s\"" % node.value]
+        )
+
     def compile_variable(self, node):
         assert node.type == "DEF_VAR"
 
@@ -438,6 +475,13 @@ class Compiler:
                 ]
             else:
                 raise SyntaxError("Invalid type: %s" + out_type)
+        
+        elif node.type == "LITERAL":
+            self.library["PUSH"] = LIBRARY["PUSH"]
+            return [
+                "    LOAD(%s, ZP_W0)" % node.md5,
+                "    jsr PUSH",
+            ]
 
         elif node.type == "IDENT":
             inode = self.names[node.value]
@@ -480,6 +524,12 @@ class Compiler:
                         "    pla",
                         "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
+                elif call_arg.return_type == "STRING":
+                    self.library["PULL"] = LIBRARY["PULL"]
+                    code += [
+                        "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
+                        "    jsr PULL",
+                    ]
                 else:
                     raise NotImplementedError()
 
@@ -498,6 +548,12 @@ class Compiler:
                     "    pha"
                     "    lda %s._RETURN_" % node.name,
                     "    pha"
+                ]
+            elif node.return_type == "STRING":
+                self.library["PUSH"] = LIBRARY["PUSH"]
+                code += [
+                    "    LOAD(%s._RETURN_, ZP_W0)" % node.name,
+                    "    jsr PUSH",
                 ]
             else:
                 raise NotImplementedError()
@@ -1023,7 +1079,7 @@ class Compiler:
                 raise NotImplementedError()
 
         else:
-            raise NotImplemented()      
+            raise NotImplementedError()
 
 LIBRARY = {
     "BYTE_MULTIPLY": [ 
@@ -1043,5 +1099,69 @@ LIBRARY = {
         "    sta ZP_W0+1"
         "    rts",
         "}"
-    ]
+    ],
+    "LOAD": [
+        ".macro LOAD(Addr, ZP) {",
+        "    lda #<Addr",
+        "    sta ZP",
+        "    lda #>Addr",
+        "    sta ZP+1",
+        "}",
+    ],
+    "PUSH": [
+        "PUSH: {",
+        "    ldy #0",
+        "    sec",
+        "    lda STACK",
+        "    sbc (ZP_W0),y",
+        "    sta STACK",
+        "    bcs !+",
+        "    dec STACK+1",
+        "!:",
+
+        "    lda (ZP_W0),y",
+        "    tay",
+        "loop:",
+        "    lda (ZP_W0),y",
+        "    sta (STACK),y",
+        "    dey",
+        "    bpl loop",
+
+        "    lda STACK",
+        "    bne !+",
+        "    dec STACK+1",
+        "!:",
+        "    dec STACK",
+
+        "    rts",
+        "}",
+    ],
+    "PULL": [
+        "PULL: {",
+        "    inc STACK",
+        "    bne !+",
+        "    inc STACK+1",
+        "!:",
+
+        "    ldy #0",
+        "    lda (STACK),y",
+        "    tay",
+        "loop:",
+        "    lda (STACK),y",
+        "    sta (ZP_W0),y",
+        "    dey",
+        "    bpl loop",
+
+        "    ldy #0",
+        "    clc",
+        "    lda STACK",
+        "    adc (STACK),y",
+        "    sta STACK",
+        "    bcc !+",
+        "    inc STACK+1",
+        "!:",
+
+        "    rts",
+        "}",
+    ],
 }
