@@ -5,7 +5,7 @@ def propagate_type(node, names):
     if isinstance(node, AstList):
         for n in node:
             propagate_type(n, names)
-        node.return_type = "???"
+        node.return_type = "NA"
 
     else:
         for k, v in node.items():
@@ -64,7 +64,7 @@ def propagate_type(node, names):
                 node.return_type = "BYTE"
         
         elif node.type in ("=", "+=", "-=", "*=", "/=", "&=", "|=", "^=", "!=", "<<=", ">>=", ">>>=", ">><=", "<<>="):
-            node.return_type = "???"
+            node.return_type = "NA"
             propagate_type(node.left, names)
             propagate_type(node.right, names)
 
@@ -125,13 +125,13 @@ def propagate_type(node, names):
                     node.args[n] = AstNode(type="C%s" % arg_def.return_type, return_type=arg_def.return_type, value=node.args[n])
 
         elif node.type == "RETURN":
-            node.return_type = names["_RETURN_"].return_type
+            node.return_type = "NA" # names["_RETURN_"].return_type
             expr_type = propagate_type(node.value, names)
             if expr_type != node.return_type:
                 node.value = AstNode(type="C%s" % node.return_type, return_type=node.return_type, value=node.value)
         
         elif node.type == "IF":
-            node.return_type = "???"
+            node.return_type = "NA"
             for index, branch in enumerate(node.branches.copy()):
                 branch_type = propagate_type(branch, names)
                 if branch_type != "BYTE":
@@ -140,12 +140,12 @@ def propagate_type(node, names):
                 propagate_type(node._else, names)
 
         elif node.type == "ELSE_IF":
-            node.return_type = "???"
+            node.return_type = "NA"
             propagate_type(node.expr, names)
             propagate_type(node.body, names)
 
         elif node.type == "ELSE":
-            node.return_type = "???"
+            node.return_type = "NA"
             propagate_type(node.body, names)
 
         elif node.type == "PEEK":
@@ -153,16 +153,20 @@ def propagate_type(node, names):
             propagate_type(node.addr, names)
 
         elif node.type == "POKE":
-            node.return_type = "???"
+            node.return_type = "NA"
             propagate_type(node.addr, names)
             propagate_type(node.value, names)
 
         elif node.type == "WHILE":
-            node.return_type = "???"
+            node.return_type = "NA"
             propagate_type(node.expr, names)
             propagate_type(node.body, names)
 
+        elif node.type in ("START", "END"):
+            node.return_type = "NA"
+
         else:
+            raise NotImplementedError()
             node.return_type = "???"
 
     return node.return_type

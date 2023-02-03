@@ -141,6 +141,13 @@ class Compiler:
                         "    pla",
                         "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
+                elif call_arg.return_type == "STRING":
+                    code += [
+                        "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
+                        "    lda #%d" % def_arg.capacity,
+                        "    sta ZP_B0",
+                        "    jsr PULL",
+                    ]
                 else:
                     raise NotImplementedError()
 
@@ -151,37 +158,47 @@ class Compiler:
             return code
 
         elif node.type == "RETURN":
-            if self.names["_RETURN_"].return_type == "BYTE":
-                return (
-                    self.compile_expr(node.value) +
-                    [
-                        "    pla",
-                        "    sta _RETURN_",
-                        "    rts"
-                    ]
-                )
-            elif self.names["_RETURN_"].return_type == "WORD":
-                return (
-                    self.compile_expr(node.value) +
-                    [
-                        "    pla",
-                        "    sta _RETURN_",
-                        "    pla",
-                        "    sta _RETURN_+1",
-                        "    rts"
-                    ]
-                )
-            elif self.names["_RETURN_"].return_type == "STRING":
-                self.library["PULL"] = LIBRARY["PULL"]
-                return (
-                    self.compile_expr(node.value) +
-                    [
-                        "    LOAD(_RETURN_, ZP_W0)",
-                        "    jmp PULL",
-                    ]
-                )
-            else:
-                raise NotImplementedError()
+            return (
+                self.compile_expr(node.value) +
+                [
+                    "    rts"
+                ]
+            )
+            # vdef = self.names["_RETURN_"]
+            # if vdef.return_type == "BYTE":
+            #     return (
+            #         self.compile_expr(node.value) +
+            #         [
+            #             "    pla",
+            #             "    sta _RETURN_",
+            #             "    rts"
+            #         ]
+            #     )
+            # elif vdef.return_type == "WORD":
+            #     return (
+            #         self.compile_expr(node.value) +
+            #         [
+            #             "    pla",
+            #             "    sta _RETURN_",
+            #             "    pla",
+            #             "    sta _RETURN_+1",
+            #             "    rts"
+            #         ]
+            #     )
+            # elif vdef.return_type == "STRING":
+            #     self.library["PULL"] = LIBRARY["PULL"]
+                
+            #     return (
+            #         self.compile_expr(node.value) +
+            #         [
+            #             "    lda #%d" % vdef.capacity,
+            #             "    sta ZP_B0",
+            #             "    LOAD(_RETURN_, ZP_W0)",
+            #             "    jsr PULL",
+            #         ]
+            #     )
+            # else:
+            #     raise NotImplementedError()
                 
         elif node.type == "POKE":
             return (
@@ -223,6 +240,7 @@ class Compiler:
             return (
                 [
                     "// CONSTANTS",
+                    ".const ZP_B0 = $02",
                     ".const STACK = $fd",
                     ".const ZP_W0 = $fb",
                     "// PREAMBLE",
@@ -352,6 +370,8 @@ class Compiler:
                         self.library["PULL"] = LIBRARY["PULL"]
                         nodes += [
                             "    // assign string",
+                            "    lda #%d" % cvar.capacity,
+                            "    sta ZP_B0",
                             "    LOAD(%s, ZP_W0)" % cvar.name,
                             "    jsr PULL",
                         ]
@@ -501,8 +521,14 @@ class Compiler:
                     "    lda %s" % inode.name,
                     "    pha",
                 ]
+            elif inode.return_type == "STRING":
+                return [
+                    "    // string to stack",
+                    "    LOAD(%s, ZP_W0)" % inode.name,
+                    "    jsr PUSH",
+                ]
             else:
-                raise SyntaxError("Invalid type: %s" + out_type)
+                raise NotImplementedError()
 
         elif node.type == "CALL":
             def_args = self.shared[node.name].args
@@ -527,6 +553,8 @@ class Compiler:
                 elif call_arg.return_type == "STRING":
                     self.library["PULL"] = LIBRARY["PULL"]
                     code += [
+                        "    lda #%d" % def_arg.capacity,
+                        "    sta ZP_B0",
                         "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
                         "    jsr PULL",
                     ]
@@ -537,26 +565,26 @@ class Compiler:
                 "    jsr %s" % node.name
             ]
 
-            if node.return_type == "BYTE":
-                code += [
-                    "    lda %s._RETURN_" % node.name,
-                    "    pha"
-                ]
-            elif node.return_type == "WORD":
-                code += [
-                    "    lda %s._RETURN_+1" % node.name,
-                    "    pha"
-                    "    lda %s._RETURN_" % node.name,
-                    "    pha"
-                ]
-            elif node.return_type == "STRING":
-                self.library["PUSH"] = LIBRARY["PUSH"]
-                code += [
-                    "    LOAD(%s._RETURN_, ZP_W0)" % node.name,
-                    "    jsr PUSH",
-                ]
-            else:
-                raise NotImplementedError()
+            # if node.return_type == "BYTE":
+            #     code += [
+            #         "    lda %s._RETURN_" % node.name,
+            #         "    pha"
+            #     ]
+            # elif node.return_type == "WORD":
+            #     code += [
+            #         "    lda %s._RETURN_+1" % node.name,
+            #         "    pha"
+            #         "    lda %s._RETURN_" % node.name,
+            #         "    pha"
+            #     ]
+            # elif node.return_type == "STRING":
+            #     self.library["PUSH"] = LIBRARY["PUSH"]
+            #     code += [
+            #         "    LOAD(%s._RETURN_, ZP_W0)" % node.name,
+            #         "    jsr PUSH",
+            #     ]
+            # else:
+            #     raise NotImplementedError()
 
             return code
 
@@ -1082,86 +1110,101 @@ class Compiler:
             raise NotImplementedError()
 
 LIBRARY = {
-    "BYTE_MULTIPLY": [ 
-        "BYTE_MULTIPLY: {",
-        "    lda #0",
-        "    ldx #$8",
-        "    lsr ZP_W0",
-        "loop:",
-        "    bcc no_add",
-        "    clc",
-        "    adc ZP_W0+1",
-        "no_add:",
-        "    ror",
-        "    ror ZP_W0",
-        "    dex",
-        "    bne loop",
-        "    sta ZP_W0+1"
-        "    rts",
-        "}"
-    ],
-    "LOAD": [
-        ".macro LOAD(Addr, ZP) {",
-        "    lda #<Addr",
-        "    sta ZP",
-        "    lda #>Addr",
-        "    sta ZP+1",
-        "}",
-    ],
-    "PUSH": [
-        "PUSH: {",
-        "    ldy #0",
-        "    sec",
-        "    lda STACK",
-        "    sbc (ZP_W0),y",
-        "    sta STACK",
-        "    bcs !+",
-        "    dec STACK+1",
-        "!:",
+"BYTE_MULTIPLY":
+"""
+BYTE_MULTIPLY: {
+    lda #0
+    ldx #$8
+    lsr ZP_W0
+loop:
+    bcc no_add
+    clc
+    adc ZP_W0+1
+no_add:
+    ror
+    ror ZP_W0
+    dex
+    bne loop
+    sta ZP_W0+1
+    rts
+}
+""".split("\n"),
+    
+"LOAD":
+"""
+.macro LOAD(Addr, ZP) {
+    lda #<Addr
+    sta ZP
+    lda #>Addr
+    sta ZP+1
+}
+""".split("\n"),
 
-        "    lda (ZP_W0),y",
-        "    tay",
-        "loop:",
-        "    lda (ZP_W0),y",
-        "    sta (STACK),y",
-        "    dey",
-        "    bpl loop",
+"PUSH":
+"""
+PUSH: {
+    ldy #0
+    sec
+    lda STACK
+    sbc (ZP_W0),y
+    sta STACK
+    bcs !+
+    dec STACK+1
+!:
 
-        "    lda STACK",
-        "    bne !+",
-        "    dec STACK+1",
-        "!:",
-        "    dec STACK",
+    lda (ZP_W0),y
+    tay
+loop:
+    lda (ZP_W0),y
+    sta (STACK),y
+    dey
+    bpl loop
 
-        "    rts",
-        "}",
-    ],
-    "PULL": [
-        "PULL: {",
-        "    inc STACK",
-        "    bne !+",
-        "    inc STACK+1",
-        "!:",
+    lda STACK
+    bne !+
+    dec STACK+1
+!:
+    dec STACK
 
-        "    ldy #0",
-        "    lda (STACK),y",
-        "    tay",
-        "loop:",
-        "    lda (STACK),y",
-        "    sta (ZP_W0),y",
-        "    dey",
-        "    bpl loop",
+    rts
+}
+""".split("\n"),
 
-        "    ldy #0",
-        "    clc",
-        "    lda STACK",
-        "    adc (STACK),y",
-        "    sta STACK",
-        "    bcc !+",
-        "    inc STACK+1",
-        "!:",
+"PULL":
+"""
+PULL: {
+    inc STACK
+    bne !+
+    inc STACK+1
+!:
 
-        "    rts",
-        "}",
-    ],
+    ldy #0   
+    lda (STACK),y   // size
+    cmp ZP_B0
+    bcc !+          // size <= capacity
+    lda ZP_B0       // capacity
+
+!:
+    sta (ZP_W0),y   // write size
+    tay
+    beq !+
+loop:
+    lda (STACK),y
+    sta (ZP_W0),y
+    dey
+    bne loop
+
+!:
+    ldy #0
+    clc
+    lda STACK
+    adc (STACK),y
+    sta STACK
+    bcc !+
+    inc STACK+1
+!:
+
+    rts
+}
+""".split("\n"),
 }

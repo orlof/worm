@@ -309,11 +309,14 @@ class Parser:
 
             return left
 
-        while self.token == "=":
-            self.advance()
+        elif self.token == "=":
+            while self.token == "=":
+                self.advance()
 
-            right = self.expr_list(len(left))
-            left = AstNode(type="=", left=left, right=right)
+                right = self.expr_list(len(left))
+                left = AstNode(type="=", left=left, right=right)
+
+            return left
 
         return left
 

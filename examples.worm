@@ -13,11 +13,12 @@
 # add overflow checking
 # try parameters
 # implement +
-string[3] f()
-    RETURN "Foo"
+
+string[3] f(string[3] s)
+    RETURN s
 
 string[3] result
-result = f()
+f("123")
 
 #byte b0
 #byte b1[2]

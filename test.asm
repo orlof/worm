@@ -1,4 +1,5 @@
 // CONSTANTS
+.const ZP_B0 = $02
 .const STACK = $fd
 .const ZP_W0 = $fb
 // PREAMBLE
@@ -10,12 +11,20 @@
     cli
     LOAD($cfff, STACK)
 // PROGRAM CODE
-    jsr f
-    LOAD(f._RETURN_, ZP_W0)
-    jsr PUSH
-    // assign string
-    LOAD(result, ZP_W0)
-    jsr PULL
+    // byte literal 1 to stack
+    // lda #1
+    // pha
+    // byte literal 1 to stack
+    // lda #1
+    // pha
+    // POKE expr, expr
+    lda #1 // optimized
+    sta ZP_W0
+    lda #1 // optimized
+    sta ZP_W0+1
+    ldy #0
+    pla
+    sta (ZP_W0),y
 // POSTAMBLE
     sei
     inc 1
@@ -25,72 +34,28 @@
 
 f: {
 // CODE
-    LOAD(STR_1356c67d7ad1638d816bfb822dd2c25d, ZP_W0)
+    // string to stack
+    LOAD(s, ZP_W0)
     jsr PUSH
-    LOAD(_RETURN_, ZP_W0)
-    jmp PULL
     rts
+    // rts
 // VARIABLES
 _RETURN_:
     .byte 0
     .text "   "
+s:
+    .byte 0
+    .text "   "
 }
+
 .macro LOAD(Addr, ZP) {
     lda #<Addr
     sta ZP
     lda #>Addr
     sta ZP+1
 }
-PUSH: {
-    ldy #0
-    sec
-    lda STACK
-    sbc (ZP_W0),y
-    sta STACK
-    bcs !+
-    dec STACK+1
-!:
-    lda (ZP_W0),y
-    tay
-loop:
-    lda (ZP_W0),y
-    sta (STACK),y
-    dey
-    bpl loop
-    lda STACK
-    bne !+
-    dec STACK+1
-!:
-    dec STACK
-    rts
-}
-PULL: {
-    inc STACK
-    bne !+
-    inc STACK+1
-!:
-    ldy #0
-    lda (STACK),y
-    tay
-loop:
-    lda (STACK),y
-    sta (ZP_W0),y
-    dey
-    bpl loop
-    ldy #0
-    clc
-    lda STACK
-    adc (STACK),y
-    sta STACK
-    bcc !+
-    inc STACK+1
-!:
-    rts
-}
+
 // LITERALS
-STR_1356c67d7ad1638d816bfb822dd2c25d:
-    .byte 3
-    .text "Foo"
 // SHARED
 // MAIN LOCALS
 result:
