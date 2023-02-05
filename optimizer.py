@@ -57,6 +57,18 @@ class Optimizer:
                     self.code[line.nr] = "    // %s" % line.src[4:]
                 prev_line = line
 
+        # optimise tax, txa and tay, tya
+        code_lines = list(self.line_iterator2())
+        pairs = [("tax", "txa"), ("tay", "tya"), ("txa", "tax"), ("tya", "tay")]
+        for block in self.block_iterator(code_lines):
+            prev_line = DotWiz(src="")
+            for line in block:
+                for op0, op1 in pairs:
+                    if op0 in prev_line.src and op1 in line.src:
+                        self.code[line.nr] = "    // %s" % line.src[4:]
+                        break
+                prev_line = line
+
         # optimise jmp to next instruction
         code_lines = list(self.line_iterator2())
         prev_line = DotWiz(src="")
@@ -81,16 +93,20 @@ class Optimizer:
     def block_iterator(self, lines):
         block = []
         for line in lines:
-            if line.src.startswith("    "):
-                block.append(line)
-            elif "{" in line.src or "}" in line.src:
-                block.append(line)
-            else:
-                yield block
-                block = [line]
+            branch = any((b in line.src) for b in ("jmp", "jsr", "rts", "bne", "beq", "bcc", "bcs", "bmi", "bpl", "bvs", "bvc"))
+            macro = line.src and line.src.strip()[0].isupper()
+            if branch or macro:
+                if block: yield block
+                if line.src:
+                    yield [line]
+                block = []
+                continue
+
+            block.append(line)
+
         if block:
             yield block
-            
+
 
 if __name__ == "__main__":
     lexer = Lexer("examples.worm")
@@ -107,7 +123,7 @@ if __name__ == "__main__":
 
     print("=== LOCAL ===")
     print(local.tree())
-    
+
     print("=== AST ===")
     print(ast.tree())
 
@@ -116,7 +132,7 @@ if __name__ == "__main__":
 
     optimizer = Optimizer(code)
     code = optimizer.optimize()
-    
+
     print("===SOURCE CODE===")
     with open("test.asm", "w") as f:
         for line in code:

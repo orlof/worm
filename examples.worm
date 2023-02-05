@@ -10,15 +10,13 @@
 #byte f0()
 #    return 1
 
-# add overflow checking
-# try parameters
-# implement +
+string[9] f(string[12] s)
+    RETURN s+"END"
 
-string[3] f(string[3] s)
-    RETURN s
+debug f("START")
 
-string[3] result
-f("123")
+#string[6] result = ["abc", "xyz"]
+#string[6] result = ["abc", "def"]
 
 #byte b0
 #byte b1[2]

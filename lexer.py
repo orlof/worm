@@ -10,12 +10,13 @@ reserved_words = {
     "true", "false",
     "not", "and", "or",
     "for", "if", "else", "while", "break", "continue", "return",
-    "asm", 
+    "asm",
     "def", "struct",
     "byte", "word", "int", "long", "string",
     "switch", "case",
     "fast", "shared",
-    "const", "poke", "peek"
+    "const", "poke", "peek",
+    "debug"
 }
 
 operators_arithmetic = [
@@ -108,7 +109,7 @@ class Lexer:
         #text = preprocess_literal_0x(text)
         #text = preprocess_remove_empty_lines(text)
         #text = preprocess_ident_to_reserved_words(text)
-        
+
         text = [("START", None)] + text + [("END", None)]
         return text
 
@@ -118,7 +119,7 @@ class Lexer:
                 if not self.depth or item[0] not in ("INDENT", "DEDENT"):
                     yield item
                 continue
-        
+
             buf = []
             for c in list(item) + ["\0"]:
                 if c and is_space(buf + [c]):
@@ -147,7 +148,7 @@ class Lexer:
                             raise SyntaxError("Mismatch () [] or {}")
                     yield ("".join(buf), None)
                     buf = [c] if c else []
-                
+
                 elif is_ident(buf):
                     ident = "".join(buf)
                     if ident.lower() == "true":
@@ -164,9 +165,9 @@ class Lexer:
 
                 elif is_numeric(buf):
                     n = "".join(buf)
-                    if n.startswith("0x"):                        
+                    if n.startswith("0x"):
                         yield ("NUMERIC", int(n, 16))
-                    elif n.startswith("0b"):                        
+                    elif n.startswith("0b"):
                         yield ("NUMERIC", int(n, 2))
                     elif n.isnumeric():
                         yield ("NUMERIC", int(n, 10))
@@ -178,19 +179,19 @@ class Lexer:
 
 if __name__ == "__main__":
     text = """abc 0 0x0
-    > >> >>> >>< >= >>= >>>= >><= 
+    > >> >>> >>< >= >>= >>>= >><=
 # Foo Bar
 abd#
 abc#foobar   $123
   abc
 "h""m"
-    abc    
-0x1230x456 0xff       0 0x0x   0123  
+    abc
+0x1230x456 0xff       0 0x0x   0123
 car0xdead 0b1111
     for
       abc xyz
 abc
-    "hello#wor'ld"    
+    "hello#wor'ld"
 
 """
     lex = Lexer(text)

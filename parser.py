@@ -16,8 +16,29 @@ class Parser:
         self.literals = AstDict()
 
         self.shared = AstDict()
-        self.local = AstList([AstDict()])
-        self.ast = AstList()
+        self.scope = AstList()
+        self.scope.append(AstNode(
+            type="DEF_FUN", name="MAIN",
+            return_type="NA",
+            local=AstDict(), ast=AstList(),
+        ))
+        #self.ast = AstList()
+
+    @property
+    def ast(self):
+        return self.scope[-1].ast
+
+    @ast.setter
+    def ast(self, value):
+        self.scope[-1].ast = value
+
+    @property
+    def local(self):
+        return self.scope[-1].local
+
+    @property
+    def func(self):
+        return self.scope[-1]
 
     @property
     def token(self):
@@ -62,30 +83,36 @@ class Parser:
                     self.ast.append(stmt)
 
         # OPTIMIZE CONSTANTS
-        for k, v in self.constants.items():
-            v.optimize_constants(self.constants)
+        for node in self.constants.values():
+            node.optimize_constants(self.constants)
 
         self.shared.optimize_constants(self.constants)
-        self.local[0].optimize_constants(self.constants)
+        self.local.optimize_constants(self.constants)
         self.ast.optimize_constants(self.constants)
 
         # INITIALIZE VARIABLES
-        assert len(self.local) == 1
-        process_variables(self.local[0])
+        assert len(self.scope) == 1
+        process_variables(self.local)
         process_variables(self.shared)
 
         # verify code trees
         names = self.shared.copy()
-        names.update(self.local[0])
+        names.update(self.local)
         propagate_type(self.ast, names)
 
-        for k, v in self.shared.items():
-            if v.type == "DEF_FUN":
+        for node in self.shared.values():
+            if node.type == "DEF_FUN":
                 names = self.shared.copy()
-                names.update(v.local)
-                propagate_type(v.body, names)
+                names.update(node.local)
+                names["__SELF__"] = node
+                propagate_type(node.ast, names)
 
-        return self.shared, self.literals, self.ast, self.local[0]
+        self.literals = collect_literals(self.ast)
+        for node in self.shared.values():
+            if node.type == "DEF_FUN":
+                self.literals.update(collect_literals(node.ast))
+
+        return self.shared, self.literals, self.ast, self.local
 
     def suite(self):
         if self.token != "INDENT":
@@ -96,7 +123,7 @@ class Parser:
             suite.append(self.stmt())
 
         self.advance()
-        return suite        
+        return suite
 
     def stmt(self):
         if self.token in ("BYTE", "WORD", "STRING"):
@@ -121,37 +148,25 @@ class Parser:
                 # FUNCTION DEFINITION
                 self.advance()
 
-                node = AstNode(type="DEF_FUN", name=name, 
-                    return_type=token, 
+                # CREATE NEW SCOPE
+                func = AstNode(type="DEF_FUN", name=name,
+                    return_type=token,
                     capacity=capacity,
-                    size=1, 
+                    size=1,
                     args = self.ast_arg_list(),
+                    local=AstDict(), ast=AstList()
                 )
+                self.scope.append(func)
 
                 assert self.token == ")"
                 self.advance()
 
-                # CREATE NEW SCOPE
-                self.local.append(AstDict())
-                # ADD RETURN VALUE TO LOCALS
-                self.local[-1]["_RETURN_"] = AstNode(type="AST_ARG", name="_RETURN_",
-                    return_type=node.return_type,
-                    capacity=node.capacity,
-                    size=1,
-                    index_type="NA",
-                    # CANNOT COMPUTE -> NO CAPACITY
-                    # initializer=[(0, " " * node.capacity)] if token=="STRING" else [0]
-                )
-
                 # ADD ARGS TO LOCALS
-                self.local[-1].update({node.name: node for node in node.args})
-                    
-                node.body = self.suite()
+                self.local.update({node.name: node for node in func.args})
 
-                # STORE LOCALS TO FUNCTION and REMOVE SCOPE
-                node.local = self.local.pop()
-                
-                self.shared[node.name] = node
+                self.ast += self.suite()
+
+                self.shared[func.name] = self.scope.pop()
                 return None
 
             else:
@@ -160,7 +175,7 @@ class Parser:
 
                 for node in self.simple_assignment_list():
                     name = node.value if node.type=="IDENT" else node.left.value
-                    self.local[-1][name] = AstNode(type="AST_VAR",
+                    self.local[name] = AstNode(type="AST_VAR",
                         name=name,
                         return_type=token,
                         capacity=capacity,
@@ -175,7 +190,7 @@ class Parser:
                 self.advance()
 
                 for node in self.simple_assignment_list():
-                    self.local[-1][node.name] = AstNode(type="AST_VAR", 
+                    self.shared[node.name] = AstNode(type="AST_VAR",
                         name=node.name.value if node.type=="IDENT" else node.left.value,
                         return_type=token,
                         capacity=capacity,
@@ -193,6 +208,11 @@ class Parser:
             self.advance()
             value = self.expr()
             return AstNode(type="POKE", addr=addr, value=value)
+
+        elif self.token == "DEBUG":
+            self.advance()
+            value = self.expr()
+            return AstNode(type="DEBUG", value=value)
 
         elif self.token == "PEEK":
             self.advance()
@@ -236,9 +256,9 @@ class Parser:
             if self.token == "ELSE":
                 self.advance()
                 node._else = AstNode(type="ELSE", body=self.suite())
-            
+
             return node
-        
+
         else:
             return self.assignment()
             #print("Not processed: %s, %s" % (self.token, self.value))
@@ -265,6 +285,7 @@ class Parser:
                 AstNode(type="AST_ARG", name=name,
                     return_type=typedef,
                     capacity=capacity,
+                    size=1,
                 )
             )
 
@@ -300,7 +321,7 @@ class Parser:
         left = self.expr_list()
 
         if self.token in [
-            "+=", "-=", "*=", "/=", "&=", "|=", "^=", "!=", 
+            "+=", "-=", "*=", "/=", "&=", "|=", "^=", "!=",
             "<<=", ">>=", ">>>=", ">><=", "<<>="]:
             self.advance()
 
@@ -332,7 +353,7 @@ class Parser:
                 if length == len(nodes):
                     return nodes
                 elif self.token != ",":
-                    raise SyntaxError("Wrong number of right side elements")                                        
+                    raise SyntaxError("Wrong number of right side elements")
 
             self.advance()
 
@@ -548,9 +569,6 @@ class Parser:
 
         if self.token in ("NUMERIC", "LITERAL", "IDENT"):
             node = AstNode(type=self.token, value=self.value)
-            if self.token == "LITERAL":
-                node.md5 = "STR_%s" % hashlib.md5(node.value.encode('utf-8')).hexdigest()
-                self.literals[node.md5] = node
             self.advance()
             return node
 

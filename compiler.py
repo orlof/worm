@@ -27,6 +27,16 @@ class Compiler:
 
         self.library = {}
 
+    def load(self, name):
+        if name not in self.library:
+            self.library[name] = LIBRARY[name]
+            for line in LIBRARY[name]:
+                token = line.split()
+                if len(token) >= 2:
+                    if token[0] == "jsr":
+                        if token[1].startswith("LIB_"):
+                            self.load(token[1])
+
     def compile(self):
         # COMPILE MAIN
         self.names = self.shared.copy()
@@ -42,43 +52,59 @@ class Compiler:
                 self.names.update(node.local)
                 self.code += self.compile_function(node)
 
-        for name, func in self.library.items():
-            self.code += func
+        # ADD MACROS
+        self.code += ["// MACROS"]
+        self.code += MACRO
+
+        # ADD LIBRARIES
+        self.code += ["// LIBRARIES"]
+        for line in self.code:
+            token = line.split()
+            if len(token) >= 2:
+                if token[0] == "jsr":
+                    if token[1].startswith("LIB_"):
+                        self.load(token[1])
+        for lib in self.library.values():
+            self.code += lib
 
         # COMPILE LITERALS
         self.code += ["// LITERALS"]
+        self.code += [".encoding \"petscii_mixed\""]
+
         for node in self.literals.values():
             self.code += self.compile_literal(node)
 
         # COMPILE VARIABLES
+        self.code += [""]
         self.code += ["// SHARED"]
         for name, node in self.shared.items():
             if node.type == "DEF_VAR":
                 self.code += self.compile_variable(node)
 
+        self.code += [""]
         self.code += ["// MAIN LOCALS"]
         for name, node in self.local.items():
             self.code += self.compile_variable(node)
 
         return self.code
 
-    def compile_function(self, ast):
-        code = [ 
-            "%s: {" % ast.name,
-            "// CODE" 
+    def compile_function(self, func):
+        code = [
+            "%s: {" % func.name,
+            "// CODE"
         ]
-        
-        for node in ast.body:
+
+        for node in func.ast:
             code += self.compile_code(node)
 
-        code += [ 
+        code += [
             "    rts",
             "// VARIABLES"
         ]
 
-        for name, node in ast.local.items():
+        for node in func.local.values():
             code += self.compile_variable(node)
-        
+
         code += [ "}" ]
 
         return code
@@ -104,7 +130,7 @@ class Compiler:
                 )
             else:
                 raise NotImplementedError()
-        
+
         elif node.type == "CWORD":
             if node.value.return_type == "BYTE":
                 return (
@@ -120,7 +146,7 @@ class Compiler:
                 )
             else:
                 raise NotImplementedError()
-        
+
         elif node.type == "CALL":
             def_args = self.shared[node.name].args
             if len(def_args) != len(node.args):
@@ -143,10 +169,10 @@ class Compiler:
                     ]
                 elif call_arg.return_type == "STRING":
                     code += [
-                        "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
                         "    lda #%d" % def_arg.capacity,
                         "    sta ZP_B0",
-                        "    jsr PULL",
+                        "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
+                        "    jsr LIB_STRING_PULL",
                     ]
                 else:
                     raise NotImplementedError()
@@ -186,20 +212,20 @@ class Compiler:
             #         ]
             #     )
             # elif vdef.return_type == "STRING":
-            #     self.library["PULL"] = LIBRARY["PULL"]
-                
+            #     self.library["LIB_STRING_PULL"] = LIBRARY["LIB_STRING_PULL"]
+
             #     return (
             #         self.compile_expr(node.value) +
             #         [
             #             "    lda #%d" % vdef.capacity,
             #             "    sta ZP_B0",
             #             "    LOAD(_RETURN_, ZP_W0)",
-            #             "    jsr PULL",
+            #             "    jsr LIB_STRING_PULL",
             #         ]
             #     )
             # else:
             #     raise NotImplementedError()
-                
+
         elif node.type == "POKE":
             return (
                 self.compile_expr(node.value) +
@@ -213,6 +239,15 @@ class Compiler:
                     "    ldy #0",
                     "    pla",
                     "    sta (ZP_W0),y",
+                ]
+            )
+
+        elif node.type == "DEBUG":
+            return (
+                self.compile_expr(node.value) +
+                [
+                    "    // DEBUG",
+                    "    jsr LIB_DEBUG",
                 ]
             )
         elif node.type == "PASS":
@@ -236,13 +271,17 @@ class Compiler:
             return []
 
         elif node.type == "START":
-            self.library["LOAD"] = LIBRARY["LOAD"]
             return (
                 [
                     "// CONSTANTS",
-                    ".const ZP_B0 = $02",
-                    ".const STACK = $fd",
-                    ".const ZP_W0 = $fb",
+                    ".const ZP_DW = $02",
+                    ".const ZP_W0 = $06",
+                    ".const ZP_W1 = $08",
+                    ".const ZP_B0 = $10",
+                    ".const ZP_B1 = $11",
+                    ".const STACK = $12",
+                    ".const KERNEL_CHROUT = $ffd2",
+                    "",
                     "// PREAMBLE",
                     "*=2048",
                     ".byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061",
@@ -251,14 +290,17 @@ class Compiler:
                     "    dec 1",
                     "    cli",
                     "    LOAD($cfff, STACK)",
-                    "// PROGRAM CODE",
+                    "",
+                    "    // PROGRAM CODE",
+                    "",
                 ]
             )
-        
+
         elif node.type == "END":
             return (
                 [
-                    "// POSTAMBLE",
+                    "",
+                    "    // POSTAMBLE",
                     "    sei",
                     "    inc 1",
                     "    cli",
@@ -267,7 +309,7 @@ class Compiler:
                     "",
                 ]
             )
-           
+
         elif node.type == "WHILE":
             code = []
             code += [
@@ -285,8 +327,8 @@ class Compiler:
                     "    bne suite",
                     "    jmp exit",
                     "suite:",
-                ] 
-            
+                ]
+
             code += self.compile_code(node.suite)
             code += [
                 "    jmp expr",
@@ -295,7 +337,7 @@ class Compiler:
             ]
 
             return code
-        
+
         elif node.type == "IF":
             code = []
             code += [
@@ -313,7 +355,7 @@ class Compiler:
                     "    jmp suite%d" % index,
                     ""
                 ]
-            
+
             code += [
                 "// ELSE",
                 "!expr:"
@@ -367,13 +409,12 @@ class Compiler:
                             "    sta %s+1" % cvar.name,
                         ]
                     elif cvar.return_type == "STRING":
-                        self.library["PULL"] = LIBRARY["PULL"]
                         nodes += [
                             "    // assign string",
                             "    lda #%d" % cvar.capacity,
                             "    sta ZP_B0",
                             "    LOAD(%s, ZP_W0)" % cvar.name,
-                            "    jsr PULL",
+                            "    jsr LIB_STRING_PULL",
                         ]
                     else:
                         raise NotImplementedError()
@@ -480,7 +521,6 @@ class Compiler:
         if node.type == "NUMERIC":
             if node.return_type == "BYTE":
                 return [
-                    "    // byte literal %d to stack" % node.value,
                     "    lda #%d" % (node.value & 0xff),
                     "    pha",
                 ]
@@ -495,38 +535,68 @@ class Compiler:
                 ]
             else:
                 raise SyntaxError("Invalid type: %s" + out_type)
-        
+
         elif node.type == "LITERAL":
-            self.library["PUSH"] = LIBRARY["PUSH"]
             return [
                 "    LOAD(%s, ZP_W0)" % node.md5,
-                "    jsr PUSH",
+                "    jsr LIB_STRING_PUSH",
             ]
 
         elif node.type == "IDENT":
-            inode = self.names[node.value]
+            ident = self.names[node.value]
 
-            if inode.return_type == "BYTE":
+            if ident.return_type == "BYTE":
                 # color
                 return [
-                    "    // push byte value of %s to stack" % inode.name,
-                    "    lda %s" % inode.name,
+                    "    // push byte value of %s to stack" % ident.name,
+                    "    lda %s" % ident.name,
                     "    pha",
                 ]
-            elif inode.return_type == "WORD":
+            elif ident.return_type == "WORD":
                 return [
                     "    // cword to stack",
-                    "    lda %s+1" % inode.name,
+                    "    lda %s+1" % ident.name,
                     "    pha",
-                    "    lda %s" % inode.name,
+                    "    lda %s" % ident.name,
                     "    pha",
                 ]
-            elif inode.return_type == "STRING":
-                return [
-                    "    // string to stack",
-                    "    LOAD(%s, ZP_W0)" % inode.name,
-                    "    jsr PUSH",
-                ]
+            elif ident.return_type == "STRING":
+                if ident.size == 1:
+                    return [
+                        "    // string to stack",
+                        "    LOAD(%s, ZP_W0)" % ident.name,
+                        "    jsr LIB_STRING_PUSH",
+                    ]
+                else:
+                    pass
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "CSTRING":
+            if node.value.return_type == "BYTE":
+                return (
+                    self.compile_expr(node.value) +
+                    [
+                        "    pla",
+                        "    jsr LIB_CSTRING_BYTE",
+                    ]
+                )
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "CWORD":
+            if node.value.return_type == "BYTE":
+                return (
+                    self.compile_expr(node.value) +
+                    [
+                        "    pla",
+                        "    tax",
+                        "    lda #0",
+                        "    pha",
+                        "    txa",
+                        "    pha",
+                    ]
+                )
             else:
                 raise NotImplementedError()
 
@@ -551,12 +621,11 @@ class Compiler:
                         "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
                 elif call_arg.return_type == "STRING":
-                    self.library["PULL"] = LIBRARY["PULL"]
                     code += [
                         "    lda #%d" % def_arg.capacity,
                         "    sta ZP_B0",
                         "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
-                        "    jsr PULL",
+                        "    jsr LIB_STRING_PULL",
                     ]
                 else:
                     raise NotImplementedError()
@@ -578,10 +647,10 @@ class Compiler:
             #         "    pha"
             #     ]
             # elif node.return_type == "STRING":
-            #     self.library["PUSH"] = LIBRARY["PUSH"]
+            #     self.library["LIB_STRING_PUSH"] = LIBRARY["LIB_STRING_PUSH"]
             #     code += [
             #         "    LOAD(%s._RETURN_, ZP_W0)" % node.name,
-            #         "    jsr PUSH",
+            #         "    jsr LIB_STRING_PUSH",
             #     ]
             # else:
             #     raise NotImplementedError()
@@ -589,82 +658,127 @@ class Compiler:
             return code
 
         elif node.type == "SUBSCRIPTION":
-            if node.left.type != "IDENT":
-                raise SyntaxError("Cannot index: %s" % node.left.type)
+            if node.left.type == "IDENT":
+                cvar = self.names[node.left.value]
 
-            cvar = self.names[node.left.value]
-            right = self.compile_expr(node.right)
+                if cvar.return_type == "STRING":
+                    if cvar.size == 1:
+                        code = [ "    // STRING %s" % node.type ]
+                        code += self.compile_expr(node.left)
+                        code += self.compile_expr(node.right)
+                        code += [
+                            "    pla",
+                            "    jsr LIB_STRING_SUBSCRIPTION",
+                        ]
+                        return code
+                    else:
+                        # STRING ARRAY INDEX IS ALWAYS WORD
+                        code = [ "    // STRING[] %s" % node.type ]
+                        code += self.compile_expr(node.right)
+                        code += [
+                            "    pla",
+                            "    sta ZP_W0",
+                            "    pla",
+                            "    sta ZP_W0+1",
 
-            if cvar.return_type == "BYTE" and cvar.index_type == "BYTE":
-                return (
-                    right +
-                    [
-                        "    pla",
-                        "    tay",
-                        "    lda %s,y" % cvar.name,
-                        "    pha"
-                    ]
-                )
-            if cvar.return_type == "BYTE" and cvar.index_type == "WORD":
-                return (
-                    right +
-                    [
-                        "    pla",
-                        "    clc",
-                        "    adc #<%s_lo" % cvar.name,
-                        "    sta ZP_W0",
+                            "    lda #0     // capacity as 16 bit number",
+                            "    sta ZP_W1+1",
+                            "    lda #%d" % cvar.capacity,
+                            "    sta ZP_W1",
+                            "    inc ZP_W1  // one byte for size",
+                            "    jsr LIB_MUL16",
+                            "    clc",
+                            "    lda #<%s" % cvar.name,
+                            "    adc ZP_DW",
+                            "    sta ZP_W0",
+                            "    lda #>%s" % cvar.name,
+                            "    adc ZP_DW+1",
+                            "    sta ZP_W0+1",
+                            "    jsr LIB_STRING_PUSH",
+                        ]
+                        return code
 
-                        "    pla",
-                        "    adc #>%s_lo" % cvar.name,
-                        "    sta ZP_W0+1",
+                if cvar.return_type == "BYTE" and cvar.index_type == "BYTE":
+                    return (
+                        self.compile_expr(node.right) +
+                        [
+                            "    pla",
+                            "    tay",
+                            "    lda %s,y" % cvar.name,
+                            "    pha"
+                        ]
+                    )
+                if cvar.return_type == "BYTE" and cvar.index_type == "WORD":
+                    return (
+                        self.compile_expr(node.right) +
+                        [
+                            "    pla",
+                            "    clc",
+                            "    adc #<%s_lo" % cvar.name,
+                            "    sta ZP_W0",
 
-                        "    ldy #0",
-                        "    lda (ZP_W0),y",
-                        "    pha",
-                    ]
-                )
-            if cvar.return_type == "WORD" and cvar.index_type == "BYTE":
-                return (
-                    right +
-                    [
-                        "    pla",
-                        "    tay",
+                            "    pla",
+                            "    adc #>%s_lo" % cvar.name,
+                            "    sta ZP_W0+1",
 
-                        "    lda %s_hi,y" % cvar.name,
-                        "    pha",
+                            "    ldy #0",
+                            "    lda (ZP_W0),y",
+                            "    pha",
+                        ]
+                    )
+                if cvar.return_type == "WORD" and cvar.index_type == "BYTE":
+                    return (
+                        self.compile_expr(node.right) +
+                        [
+                            "    pla",
+                            "    tay",
 
-                        "    lda %s_lo,y" % cvar.name,
-                        "    pha",
-                    ]
-                )
-            if cvar.return_type == "WORD" and cvar.index_type == "WORD":
-                return (
-                    right +
-                    [
-                        "    pla",
-                        "    clc",
-                        "    adc #<%s_lo" % cvar.name,
-                        "    sta ZP_W0",
+                            "    lda %s_hi,y" % cvar.name,
+                            "    pha",
 
-                        "    pla",
-                        "    adc #>%s_lo" % cvar.name,
-                        "    sta ZP_W0+1",
+                            "    lda %s_lo,y" % cvar.name,
+                            "    pha",
+                        ]
+                    )
+                if cvar.return_type == "WORD" and cvar.index_type == "WORD":
+                    return (
+                        self.compile_expr(node.right) +
+                        [
+                            "    pla",
+                            "    clc",
+                            "    adc #<%s_lo" % cvar.name,
+                            "    sta ZP_W0",
 
-                        "    ldy #0",
-                        "    lda (ZP_W0),y",
-                        "    tax",
+                            "    pla",
+                            "    adc #>%s_lo" % cvar.name,
+                            "    sta ZP_W0+1",
 
-                        "    lda #%d" % ((cvar.size >> 8) & 0xff),
-                        "    clc",
-                        "    adc ZP_W0+1",
-                        "    sta ZP_W0+1",
-                        "    ldy #%d" % (cvar.size & 0xff),
-                        "    lda (ZP_W0),y",
-                        "    pha",
-                        "    txa",
-                        "    pha",
-                    ]
-                )
+                            "    ldy #0",
+                            "    lda (ZP_W0),y",
+                            "    tax",
+
+                            "    lda #%d" % ((cvar.size >> 8) & 0xff),
+                            "    clc",
+                            "    adc ZP_W0+1",
+                            "    sta ZP_W0+1",
+                            "    ldy #%d" % (cvar.size & 0xff),
+                            "    lda (ZP_W0),y",
+                            "    pha",
+                            "    txa",
+                            "    pha",
+                        ]
+                    )
+            elif node.right.return_type == "STRING":
+                code = [ "    // STRING %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    jsr LIB_STRING_SUBSCRIPTION",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
 
         elif node.type == "AND_LIST":
             if len(node.value) == 1:
@@ -782,11 +896,11 @@ class Compiler:
                     "}"
                 ]
                 return code
-            
-            elif node.left.return_type == "WORD":
+
+            elif node.return_type == "WORD":
                 return (
                     [   "    // eval left side of +"] +
-                    left + 
+                    left +
                     [   "    // eval right side of +"] +
                     right +
                     [
@@ -806,6 +920,16 @@ class Compiler:
                         "    txa",
                         "    pha",
                     ])
+
+            elif node.return_type == "STRING":
+                code = [ "{ // STRING %s" % node.type ]
+                code += self.compile_expr(node.right)
+                code += self.compile_expr(node.left)
+                code += [
+                    "    jsr LIB_STRING_MERGE",
+                    "}"
+                ]
+                return code
             else:
                 raise NotImplemented()
 
@@ -829,8 +953,24 @@ class Compiler:
 
         elif node.type == "*":
             if node.return_type == "BYTE":
-                self.library["BYTE_MULTIPLY"] = LIBRARY["BYTE_MULTIPLY"]
                 code = [ "{ // BYTE %s" % node.type ]
+                code += self.compile_expr(node.left)
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_B0",
+                    "    pla",
+                    "    sta ZP_B1",
+
+                    "    jsr LIB_MUL8",
+
+                    "    lda ZP_W0",
+                    "    pha",
+                    "}",
+                ]
+                return code
+            if node.return_type == "WORD":
+                code = [ "{ // WORD %s" % node.type ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -838,10 +978,16 @@ class Compiler:
                     "    sta ZP_W0",
                     "    pla",
                     "    sta ZP_W0+1",
+                    "    pla",
+                    "    sta ZP_W1",
+                    "    pla",
+                    "    sta ZP_W1+1",
 
-                    "    jsr BYTE_MULTIPLY",
+                    "    jsr LIB_MUL16",
 
-                    "    lda ZP_W0",
+                    "    lda ZP_DW",
+                    "    pha",
+                    "    lda ZP_DW+1",
                     "    pha",
                     "}",
                 ]
@@ -1109,28 +1255,7 @@ class Compiler:
         else:
             raise NotImplementedError()
 
-LIBRARY = {
-"BYTE_MULTIPLY":
-"""
-BYTE_MULTIPLY: {
-    lda #0
-    ldx #$8
-    lsr ZP_W0
-loop:
-    bcc no_add
-    clc
-    adc ZP_W0+1
-no_add:
-    ror
-    ror ZP_W0
-    dex
-    bne loop
-    sta ZP_W0+1
-    rts
-}
-""".split("\n"),
-    
-"LOAD":
+MACRO = \
 """
 .macro LOAD(Addr, ZP) {
     lda #<Addr
@@ -1138,11 +1263,187 @@ no_add:
     lda #>Addr
     sta ZP+1
 }
+
+.macro INC16(Addr) {
+    inc Addr
+    bne !+
+    inc Addr+1
+!:
+}
+
+.macro ADD16_BYTE(Addr, Value) {
+    clc
+    lda #Value
+    adc Addr
+    sta Addr
+    bcc exit
+    inc Addr+1
+exit:
+}
+
+.macro SUB16_BYTE(Addr, Value) {
+    sec
+    lda #Value
+    sbc Addr
+    sta Addr
+    bcs exit
+    dec Addr+1
+exit:
+}
+
+.macro DEC16(Addr) {
+    lda Addr
+    bne !+
+    dec Addr+1
+!:
+    dec Addr
+}
+""".split("\n")
+
+LIBRARY = {
+"LIB_DEBUG":
+"""
+LIB_DEBUG: {
+    INC16(STACK)
+    ldy #0
+    lda (STACK),y
+    tax
+!:
+    iny
+    lda (STACK),y
+    jsr KERNEL_CHROUT
+    dex
+    bne !-
+
+    clc
+    tya
+    adc STACK
+    sta STACK
+    bcc !+
+    inc STACK+1
+!:
+    lda #13
+    jsr KERNEL_CHROUT
+
+    rts
+}
 """.split("\n"),
 
-"PUSH":
+"LIB_STRING_SUBSCRIPTION":
 """
-PUSH: {
+LIB_STRING_SUBSCRIPTION: {
+    tay
+    iny
+    iny
+    lda (STACK),y
+    pha
+    jsr LIB_STRING_POP
+    pla
+    ldy #0
+    sta (STACK),y
+    DEC16(STACK)
+    lda #1
+    sta (STACK),y
+    DEC16(STACK)
+    rts
+}
+""".split("\n"),
+
+"LIB_MUL16":
+"""
+LIB_MUL16: {
+    lda #0          // Initialize RESULT to 0
+    sta ZP_DW+2
+    ldx #16         // There are 16 bits in ZP_W1
+L1:
+    lsr ZP_W1+1     // Get low bit of ZP_W1
+    ror ZP_W1
+    bcc L2          // 0 or 1?
+    tay             // If 1, add ZP_W0 (hi byte of RESULT is in A)
+    clc
+    lda ZP_W0
+    adc ZP_DW+2
+    sta ZP_DW+2
+    tya
+    adc ZP_W0+1
+L2:
+    ror             // "Stairstep" shift
+    ror ZP_DW+2
+    ror ZP_DW+1
+    ror ZP_DW
+    dex
+    bne L1
+    sta ZP_DW+3
+    rts
+}
+""".split("\n"),
+
+"LIB_MUL8":
+"""
+LIB_MUL8: {
+    lda #0          // Initialize RESULT to 0
+    ldx #8          // There are 8 bits in ZP_B1
+L1
+    lsr ZP_B2       // Get low bit of ZP_B1
+    bcc L2          // 0 or 1?
+    clc             // If 1, add ZP_B0
+    adc ZP_B1
+L2
+    ror             // "Stairstep" shift (catching carry from add)
+    ror ZP_W0
+    dex
+    bne L1
+    sta ZP_W0+1
+    rts
+}
+""".split("\n"),
+
+"LIB_STRING_MERGE":
+"""
+LIB_STRING_MERGE: {
+    INC16(STACK)
+
+    ldy #0
+    lda (STACK),y   // left size
+    tay
+    iny
+    clc
+    adc (STACK),y   // right size
+    tax
+!:
+    dey
+    lda (STACK),y
+    iny
+    sta (STACK),y
+    dey
+    bne !-
+
+    iny
+    txa
+    sta (STACK),y
+    rts
+}
+""".split("\n"),
+
+"LIB_STRING_POP":
+"""
+LIB_STRING_POP: {
+    ldy #1
+    lda (STACK),y
+    clc
+    adc #1
+    adc STACK
+    sta STACK
+    bcc exit
+    inc STACK+1
+exit:
+    rts
+}
+""".split("\n"),
+
+"LIB_STRING_PUSH":
+"""
+LIB_STRING_PUSH: {
     ldy #0
     sec
     lda STACK
@@ -1160,25 +1461,76 @@ loop:
     dey
     bpl loop
 
-    lda STACK
-    bne !+
-    dec STACK+1
-!:
-    dec STACK
-
+    DEC16(STACK)
     rts
 }
 """.split("\n"),
 
-"PULL":
-"""
-PULL: {
-    inc STACK
-    bne !+
-    inc STACK+1
-!:
 
-    ldy #0   
+"LIB_CSTRING_BYTE":
+"""
+LIB_CSTRING_BYTE: {
+    ldx #$ff                // Prepare for subtraction
+    sec
+!:                          // Count how many 100s
+    inx
+    sbc #100
+    bcs !-
+    adc #100
+    stx ZP_B0
+
+    ldx #$ff                // Prepare for subtraction
+    sec
+!:                          // Count how many 10s
+    inx
+    sbc #10
+    bcs !-
+    adc #10
+
+    // ZP_B0 = 100s, x=10s, a=1s
+
+    ldy #0                  // store 1s
+    ora #$30                // petscii '0'
+    sta (STACK),y
+
+    DEC16(STACK)
+    txa                     // exit if 10s and 100s are zero
+    ora ZP_B0
+    beq exit_1
+
+    txa                     // store 10s
+    ora #$30
+    sta (STACK),y
+
+    DEC16(STACK)
+    lda ZP_B0
+    beq exit_2
+
+    ora #$30
+    sta (STACK),y
+    DEC16(STACK)
+
+exit_3:
+    lda #3
+    .byte $2c
+exit_2:
+    lda #2
+    .byte $2c
+exit_1:
+    lda #1
+exit:
+    sta (STACK),y
+    DEC16(STACK)
+    rts
+}
+""".split("\n"),
+
+"LIB_STRING_PULL":
+"""
+LIB_STRING_PULL: {
+    INC16(STACK)
+
+    ldy #0
     lda (STACK),y   // size
     cmp ZP_B0
     bcc !+          // size <= capacity
@@ -1207,4 +1559,5 @@ loop:
     rts
 }
 """.split("\n"),
+
 }

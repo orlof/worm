@@ -1,5 +1,21 @@
 DEFAULT_STRING_CAPACITY = 32
+import hashlib
 from nodes import *
+
+def collect_literals(node):
+    results = AstDict()
+    if isinstance(node, AstList):
+        for n in node:
+            results.update(collect_literals(n))
+        return results
+
+    for v in node.values():
+        if isinstance(v, (AstNode, AstList, AstDict)):
+            results.update(collect_literals(v))
+    if node.type == "LITERAL":
+        node.md5 = "STR_%s" % hashlib.md5(node.value.encode('utf-8')).hexdigest()
+        results[node.md5] = node
+    return results
 
 def propagate_type(node, names):
     if isinstance(node, AstList):
@@ -14,7 +30,7 @@ def propagate_type(node, names):
 
         if node.type == "IDENT":
             node.return_type = names[node.value].return_type
-        
+
         elif node.type == "LITERAL":
             node.return_type = "STRING"
 
@@ -31,12 +47,38 @@ def propagate_type(node, names):
         elif node.type == "SUBSCRIPTION":
             node.return_type = propagate_type(node.left, names)
             node.index_type = propagate_type(node.right, names)
+            if node.return_type == "STRING":
+                if node.left.type == "IDENT":
+                    cvar = names[node.left.value]
+                    if cvar.size > 1:
+                        # array of strings
+                        if node.index_type != "WORD":
+                            node.index_type = "WORD"
+                            node.right = AstNode(type="CWORD", return_type="WORD", value=node.right)
+                    else:
+                        # string ident
+                        if node.index_type != "BYTE":
+                            node.index_type = "BYTE"
+                            node.right = AstNode(type="CBYTE", return_type="BYTE", value=node.right)
+                else:
+                    # string, but not ident
+                    if node.index_type != "BYTE":
+                        node.right = AstNode(type="CBYTE", return_type="BYTE", value=node.right)
+
+        elif node.type in ("CSTRING", "CINT", "CBYTE", "CWORD", "CLONG"):
+            assert node.return_type == node.type[1:]
 
         elif node.type in ("+", "-", "*", "/", "%", "&", "|", "^"):
             left = propagate_type(node.left, names)
             right = propagate_type(node.right, names)
 
-            if "LONG" in (left, right):
+            if "STRING" in (left, right):
+                if left != "STRING":
+                    node.left = AstNode(type="CSTRING", return_type="STRING", value=node.left)
+                if right != "STRING":
+                    node.right = AstNode(type="CSTRING", return_type="STRING", value=node.right)
+                node.return_type = "STRING"
+            elif "LONG" in (left, right):
                 if left != "LONG":
                     node.left = AstNode(type="CLONG", return_type="LONG", value=node.left)
                 if right != "LONG":
@@ -62,7 +104,7 @@ def propagate_type(node, names):
                 node.return_type = "INT"
             else:
                 node.return_type = "BYTE"
-        
+
         elif node.type in ("=", "+=", "-=", "*=", "/=", "&=", "|=", "^=", "!=", "<<=", ">>=", ">>>=", ">><=", "<<>="):
             node.return_type = "NA"
             propagate_type(node.left, names)
@@ -99,7 +141,7 @@ def propagate_type(node, names):
                     node.right = AstNode(type="CINT", return_type="INT", value=node.right)
             else:
                 node.child_type = "BYTE"
-        
+
         elif node.type in ("**", "<<", ">>", ">>>", ">><", "<<>"):
             node.return_type = propagate_type(node.left, names)
             propagate_type(node.right, names)
@@ -122,14 +164,16 @@ def propagate_type(node, names):
                 arg_expr, arg_def = node.args[n], names[node.name].args[n]
                 arg_type = propagate_type(arg_expr, names)
                 if arg_type != arg_def.return_type:
-                    node.args[n] = AstNode(type="C%s" % arg_def.return_type, return_type=arg_def.return_type, value=node.args[n])
+                    node.args[n] = AstNode(type="C%s" % arg_def.return_type,
+                        return_type=arg_def.return_type,
+                        value=node.args[n])
 
         elif node.type == "RETURN":
             node.return_type = "NA" # names["_RETURN_"].return_type
             expr_type = propagate_type(node.value, names)
-            if expr_type != node.return_type:
+            if expr_type != names["__SELF__"].return_type:
                 node.value = AstNode(type="C%s" % node.return_type, return_type=node.return_type, value=node.value)
-        
+
         elif node.type == "IF":
             node.return_type = "NA"
             for index, branch in enumerate(node.branches.copy()):
@@ -142,6 +186,8 @@ def propagate_type(node, names):
         elif node.type == "ELSE_IF":
             node.return_type = "NA"
             propagate_type(node.expr, names)
+            if node.value.return_type != "BYTE":
+                node.value = AstNode(type="CBYTE", return_type="BYTE", value=node.addr)
             propagate_type(node.body, names)
 
         elif node.type == "ELSE":
@@ -151,15 +197,29 @@ def propagate_type(node, names):
         elif node.type == "PEEK":
             node.return_type = "BYTE"
             propagate_type(node.addr, names)
+            if node.addr.return_type not in ("BYTE", "WORD"):
+                node.addr = AstNode(type="CWORD", return_type="WORD", value=node.addr)
 
         elif node.type == "POKE":
             node.return_type = "NA"
             propagate_type(node.addr, names)
+            if node.addr.return_type not in ("BYTE", "WORD"):
+                node.addr = AstNode(type="CWORD", return_type="WORD", value=node.addr)
             propagate_type(node.value, names)
+            if node.value.return_type != "BYTE":
+                node.value = AstNode(type="CBYTE", return_type="BYTE", value=node.addr)
+
+        elif node.type == "DEBUG":
+            node.return_type = "NA"
+            propagate_type(node.value, names)
+            if node.value.return_type != "STRING":
+                node.value = AstNode(type="CSTRING", return_type="STRING", value=node.value)
 
         elif node.type == "WHILE":
             node.return_type = "NA"
             propagate_type(node.expr, names)
+            if node.expr.return_type != "BYTE":
+                node.expr = AstNode(type="CBYTE", return_type="BYTE", value=node.expr)
             propagate_type(node.body, names)
 
         elif node.type in ("START", "END"):
@@ -182,7 +242,7 @@ def process_variables(namespace):
             node.capacity = node.capacity.value
 
 def process_ast_var(node):
-    ast = node.ast    
+    ast = node.ast
     if ast.type == "=":
         left, right = ast.left, ast.right
 
@@ -267,7 +327,7 @@ def process_ast_var(node):
         elif node.return_type == "BYTE":
             # byte b[5]
             size = right.value
-            
+
             node.type = "DEF_VAR"
             node.size = size
             node.index_type = "BYTE" if node.size <= 255 else "WORD"
@@ -294,7 +354,7 @@ def process_ast_var(node):
 
         elif node.return_type == "BYTE":
             # byte b
-            
+
             node.type = "DEF_VAR"
             node.size = 1
             node.index_type = "BYTE"
@@ -308,7 +368,7 @@ def process_ast_var(node):
     else:
         raise NotImplementedError()
 
-def process_ast_arg(node):    
+def process_ast_arg(node):
     if node.return_type == "STRING":
         # string s or string[3] s
 
