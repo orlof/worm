@@ -12,7 +12,7 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
 
-        self.constants = AstDict()
+        #self.constants = AstDict()
         self.literals = AstDict()
 
         self.shared = AstDict()
@@ -67,6 +67,7 @@ class Parser:
                 break
 
             elif self.token == "CONST":
+                assert False
                 self.advance()
                 if self.token == "IDENT":
                     name = self.value
@@ -83,12 +84,12 @@ class Parser:
                     self.ast.append(stmt)
 
         # OPTIMIZE CONSTANTS
-        for node in self.constants.values():
-            node.optimize_constants(self.constants)
+        # for node in self.constants.values():
+        #     node.optimize_constants(self.constants)
 
-        self.shared.optimize_constants(self.constants)
-        self.local.optimize_constants(self.constants)
-        self.ast.optimize_constants(self.constants)
+        self.shared.optimize_constants()
+        self.local.optimize_constants()
+        self.ast.optimize_constants()
 
         # INITIALIZE VARIABLES
         assert len(self.scope) == 1
@@ -199,6 +200,17 @@ class Parser:
                 return None
             else:
                 raise NotImplemented()
+
+        elif self.token == "ASM":
+            self.advance()
+            assert self.token == "ASM_BLOCK"
+            value = self.value
+            self.advance()
+            assert self.token == "END"
+            self.advance()
+            assert self.token == "ASM"
+            self.advance()
+            return AstNode(type="ASM", value=value)
 
         elif self.token == "POKE":
             self.advance()

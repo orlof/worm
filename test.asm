@@ -7,6 +7,8 @@
 .const STACK = $12
 .const KERNEL_CHROUT = $ffd2
 
+.const SIZE2 = 2
+.const SIZE = SIZE2 + 1
 // PREAMBLE
 *=2048
 .byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061
@@ -18,14 +20,24 @@
 
     // PROGRAM CODE
 
-    LOAD(STR_b078ffd28db767c502ac367053f6e0ac, ZP_W0)
-    jsr LIB_STRING_PUSH
-    lda #12
+{
+    lda #1
+loop:
+// FOOBAR
+    stx   // foobar
+    inc
+    bne SIZE
+exit:
+}
+    // lda #3
+    // pha
+    lda #0
+    sta ZP_W0+1
+    lda #3 // optimized
+    sta ZP_W0
+    lda #0
     sta ZP_B0
-    LOAD(f.s, ZP_W0)
-    jsr LIB_STRING_PULL
-    jsr f
-    // DEBUG
+    jsr LIB_CSTRING_WORD
     jsr LIB_DEBUG
 
     // POSTAMBLE
@@ -37,12 +49,42 @@
 
 f: {
 // CODE
+{
+    lda #1
+loop:
+//FOOBAR
+    stx    //foobar
+    inc
+    bne
+exit:
+}
 { // STRING +
-    LOAD(STR_b1a326c06d88bf042f73d70f50197905, ZP_W0)
-    jsr LIB_STRING_PUSH
-    // string to stack
-    LOAD(s, ZP_W0)
-    jsr LIB_STRING_PUSH
+    // lda #1
+    // pha
+    lda #0
+    sta ZP_W0+1
+    lda #1 // optimized
+    sta ZP_W0
+    lda #0
+    sta ZP_B0
+    jsr LIB_CSTRING_WORD
+{ // STRING +
+    // lda #2
+    // pha
+    lda #0
+    sta ZP_W0+1
+    lda #2 // optimized
+    sta ZP_W0
+    lda #0
+    sta ZP_B0
+    jsr LIB_CSTRING_WORD
+{ // STRING +
+    STR_PUSH_FROM(STR_b1a326c06d88bf042f73d70f50197905)
+    STR_PUSH_FROM(s)
+    jsr LIB_STRING_MERGE
+}
+    jsr LIB_STRING_MERGE
+}
     jsr LIB_STRING_MERGE
 }
     rts
@@ -68,23 +110,23 @@ s:
 !:
 }
 
-.macro ADD16_BYTE(Addr, Value) {
+.macro ADD16_BYTE(wAddr, bAddr) {
     clc
-    lda #Value
-    adc Addr
-    sta Addr
+    lda bAddr
+    adc wAddr
+    sta wAddr
     bcc exit
-    inc Addr+1
+    inc wAddr+1
 exit:
 }
 
-.macro SUB16_BYTE(Addr, Value) {
+.macro SUB16_BYTE(wAddr, bAddr) {
     sec
-    lda #Value
-    sbc Addr
-    sta Addr
+    lda wAddr
+    sbc bAddr
+    sta wAddr
     bcs exit
-    dec Addr+1
+    dec wAddr+1
 exit:
 }
 
@@ -96,61 +138,94 @@ exit:
     dec Addr
 }
 
-// LIBRARIES
-
-LIB_STRING_PUSH: {
-    ldy #0
-    sec
-    lda STACK
-    sbc (ZP_W0),y
-    sta STACK
-    bcs !+
-    dec STACK+1
-!:
-
-    lda (ZP_W0),y
-    tay
-loop:
-    lda (ZP_W0),y
-    sta (STACK),y
-    dey
-    bpl loop
-
-    DEC16(STACK)
-    rts
+.macro STR_PUSH_FROM(Addr) {
+    LOAD(Addr, ZP_W0)
+    jsr LIB_STRING_PUSH
 }
 
+.macro STR_PULL_TO(Addr) {
+    // capacity in a
+    LOAD(Addr, ZP_W0)
+    jsr LIB_STRING_PULL
+}
 
-LIB_STRING_PULL: {
-    INC16(STACK)
+// LIBRARIES
 
-    ldy #0
-    lda (STACK),y   // size
-    cmp ZP_B0
-    bcc !+          // size <= capacity
-    lda ZP_B0       // capacity
+/*
+---------------------------
+Print 16-bit decimal number
+---------------------------
+On entry, ZP_W0=number to print
+          ZP_B0=0 or pad character (eg '0' or ' ')
+On entry at PrDec16Lp1,
+          Y=(number of digits)*2-2, eg 8 for 5 digits
+On exit,  A,X,Y,ZP_W0,ZP_B0 corrupted
+Size      69 bytes
+-----------------------------------------------------------------
+*/
+LIB_CSTRING_WORD: {
+PrDec16:
+    lda #1                              // String length
+    sta ZP_B1
+    ldy #8                              // Offset to powers of ten
 
-!:
-    sta (ZP_W0),y   // write size
-    tay
-    beq !+
-loop:
-    lda (STACK),y
-    sta (ZP_W0),y
+PrDec16Lp1:
+    ldx #$ff
+    sec                                 // Start with digit=-1
+PrDec16Lp2:
+    lda ZP_W0+0
+    sbc PrDec16Tens+0,y
+    sta ZP_W0+0                         // Subtract current tens
+    lda ZP_W0+1
+    sbc PrDec16Tens+1,y
+    sta ZP_W0+1
+    inx
+    bcs PrDec16Lp2                      // Loop until <0
+    lda ZP_W0+0
+    adc PrDec16Tens+0,Y
+    sta ZP_W0+0                         // Add current tens back in
+    lda ZP_W0+1
+    adc PrDec16Tens+1,y
+    sta ZP_W0+1
+    txa
+    bne PrDec16Digit                    // Not zero, print it
+    lda ZP_B0
+    bne PrDec16Print
+    beq PrDec16Next                     // pad<>0, use it
+PrDec16Digit:
+    ldx #$30
+    stx ZP_B0                           // No more zero padding
+    ora #$30                            // Print this digit
+PrDec16Print:
+    inc ZP_B1
+    pha
+PrDec16Next:
     dey
-    bne loop
+    dey
+    bpl PrDec16Lp1                      // Loop for next digit
 
+    SUB16_BYTE(STACK, ZP_B1)
+    ldy ZP_B1
 !:
-    ldy #0
-    clc
-    lda STACK
-    adc (STACK),y
-    sta STACK
-    bcc !+
-    inc STACK+1
-!:
+    pla
+    sta (STACK),y
+    dey
+    cpy #1
+    bne !-
+
+    ldx ZP_B1
+    dex
+    txa
+    sta (STACK),y
 
     rts
+
+PrDec16Tens:
+    .word 1
+    .word 10
+    .word 100
+    .word 1000
+    .word 10000
 }
 
 
@@ -204,11 +279,62 @@ LIB_STRING_MERGE: {
     rts
 }
 
+
+LIB_STRING_PUSH: {
+    ldy #0
+    sec
+    lda STACK
+    sbc (ZP_W0),y
+    sta STACK
+    bcs !+
+    dec STACK+1
+!:
+
+    lda (ZP_W0),y
+    tay
+loop:
+    lda (ZP_W0),y
+    sta (STACK),y
+    dey
+    bpl loop
+
+    DEC16(STACK)
+    rts
+}
+
+
+LIB_STRING_PULL: {
+    INC16(STACK)
+
+    ldy #0
+    cmp (STACK),y   //
+    bcc !+          // capacity < size
+    lda (STACK),y
+!:
+    sta (ZP_W0),y   // write size
+    tay
+    beq !+
+loop:
+    lda (STACK),y
+    sta (ZP_W0),y
+    dey
+    bne loop
+
+!:
+    ldy #0
+    clc
+    lda STACK
+    adc (STACK),y
+    sta STACK
+    bcc !+
+    inc STACK+1
+!:
+
+    rts
+}
+
 // LITERALS
 .encoding "petscii_upper"
-STR_b078ffd28db767c502ac367053f6e0ac:
-    .byte 5
-    .text "START"
 STR_b1a326c06d88bf042f73d70f50197905:
     .byte 3
     .text "END"
@@ -216,3 +342,5 @@ STR_b1a326c06d88bf042f73d70f50197905:
 // SHARED
 
 // MAIN LOCALS
+a:
+    .byte $03

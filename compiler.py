@@ -16,11 +16,12 @@ def format_data(name, data):
     return rows
 
 class Compiler:
-    def __init__(self, shared, literals, ast, local):
+    def __init__(self, shared, literals, ast, local, constants):
         self.shared = shared
         self.literals = literals
         self.local = local
         self.ast = ast
+        self.constants = constants
 
         self.names = {}
         self.code = []
@@ -69,7 +70,7 @@ class Compiler:
 
         # COMPILE LITERALS
         self.code += ["// LITERALS"]
-        self.code += [".encoding \"petscii_mixed\""]
+        self.code += [".encoding \"petscii_upper\""]
 
         for node in self.literals.values():
             self.code += self.compile_literal(node)
@@ -147,6 +148,10 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
+        elif node.type == "ASM":
+            code = ["{"] + node.value + ["}"]
+            return code
+
         elif node.type == "CALL":
             def_args = self.shared[node.name].args
             if len(def_args) != len(node.args):
@@ -170,9 +175,7 @@ class Compiler:
                 elif call_arg.return_type == "STRING":
                     code += [
                         "    lda #%d" % def_arg.capacity,
-                        "    sta ZP_B0",
-                        "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
-                        "    jsr LIB_STRING_PULL",
+                        "    STR_PULL_TO(%s.%s)" % (node.name, def_arg.name),
                     ]
                 else:
                     raise NotImplementedError()
@@ -246,7 +249,6 @@ class Compiler:
             return (
                 self.compile_expr(node.value) +
                 [
-                    "    // DEBUG",
                     "    jsr LIB_DEBUG",
                 ]
             )
@@ -267,12 +269,8 @@ class Compiler:
                 "    pha",
             ]
 
-        elif node.type == "PASS":
-            return []
-
         elif node.type == "START":
-            return (
-                [
+            code = [
                     "// CONSTANTS",
                     ".const ZP_DW = $02",
                     ".const ZP_W0 = $06",
@@ -282,6 +280,9 @@ class Compiler:
                     ".const STACK = $12",
                     ".const KERNEL_CHROUT = $ffd2",
                     "",
+                ]
+            code += [".const %s = %s" % (name, value) for name, value in self.constants.items()]
+            code += [
                     "// PREAMBLE",
                     "*=2048",
                     ".byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061",
@@ -294,7 +295,7 @@ class Compiler:
                     "    // PROGRAM CODE",
                     "",
                 ]
-            )
+            return code
 
         elif node.type == "END":
             return (
@@ -412,9 +413,7 @@ class Compiler:
                         nodes += [
                             "    // assign string",
                             "    lda #%d" % cvar.capacity,
-                            "    sta ZP_B0",
-                            "    LOAD(%s, ZP_W0)" % cvar.name,
-                            "    jsr LIB_STRING_PULL",
+                            "    STR_PULL_TO(%s)" % cvar.name,
                         ]
                     else:
                         raise NotImplementedError()
@@ -538,8 +537,7 @@ class Compiler:
 
         elif node.type == "LITERAL":
             return [
-                "    LOAD(%s, ZP_W0)" % node.md5,
-                "    jsr LIB_STRING_PUSH",
+                "    STR_PUSH_FROM(%s)" % node.md5,
             ]
 
         elif node.type == "IDENT":
@@ -563,9 +561,7 @@ class Compiler:
             elif ident.return_type == "STRING":
                 if ident.size == 1:
                     return [
-                        "    // string to stack",
-                        "    LOAD(%s, ZP_W0)" % ident.name,
-                        "    jsr LIB_STRING_PUSH",
+                        "    STR_PUSH_FROM(%s)" % ident.name,
                     ]
                 else:
                     pass
@@ -577,8 +573,26 @@ class Compiler:
                 return (
                     self.compile_expr(node.value) +
                     [
+                        "    lda #0",
+                        "    sta ZP_W0+1",
                         "    pla",
-                        "    jsr LIB_CSTRING_BYTE",
+                        "    sta ZP_W0",
+                        "    lda #0",
+                        "    sta ZP_B0",
+                        "    jsr LIB_CSTRING_WORD",
+                    ]
+                )
+            if node.value.return_type == "WORD":
+                return (
+                    self.compile_expr(node.value) +
+                    [
+                        "    pla",
+                        "    sta ZP_W0",
+                        "    pla",
+                        "    sta ZP_W0+1",
+                        "    lda #0",
+                        "    sta ZP_B0",
+                        "    jsr LIB_CSTRING_WORD",
                     ]
                 )
             else:
@@ -623,9 +637,7 @@ class Compiler:
                 elif call_arg.return_type == "STRING":
                     code += [
                         "    lda #%d" % def_arg.capacity,
-                        "    sta ZP_B0",
-                        "    LOAD(%s.%s, ZP_W0)" % (node.name, def_arg.name),
-                        "    jsr LIB_STRING_PULL",
+                        "    STR_PULL_TO(%s.%s)" % (node.name, def_arg.name),
                     ]
                 else:
                     raise NotImplementedError()
@@ -1271,23 +1283,23 @@ MACRO = \
 !:
 }
 
-.macro ADD16_BYTE(Addr, Value) {
+.macro ADD16_BYTE(wAddr, bAddr) {
     clc
-    lda #Value
-    adc Addr
-    sta Addr
+    lda bAddr
+    adc wAddr
+    sta wAddr
     bcc exit
-    inc Addr+1
+    inc wAddr+1
 exit:
 }
 
-.macro SUB16_BYTE(Addr, Value) {
+.macro SUB16_BYTE(wAddr, bAddr) {
     sec
-    lda #Value
-    sbc Addr
-    sta Addr
+    lda wAddr
+    sbc bAddr
+    sta wAddr
     bcs exit
-    dec Addr+1
+    dec wAddr+1
 exit:
 }
 
@@ -1297,6 +1309,17 @@ exit:
     dec Addr+1
 !:
     dec Addr
+}
+
+.macro STR_PUSH_FROM(Addr) {
+    LOAD(Addr, ZP_W0)
+    jsr LIB_STRING_PUSH
+}
+
+.macro STR_PULL_TO(Addr) {
+    // capacity in a
+    LOAD(Addr, ZP_W0)
+    jsr LIB_STRING_PULL
 }
 """.split("\n")
 
@@ -1383,12 +1406,12 @@ L2:
 LIB_MUL8: {
     lda #0          // Initialize RESULT to 0
     ldx #8          // There are 8 bits in ZP_B1
-L1
-    lsr ZP_B2       // Get low bit of ZP_B1
+L1:
+    lsr ZP_B1       // Get low bit of ZP_B1
     bcc L2          // 0 or 1?
     clc             // If 1, add ZP_B0
-    adc ZP_B1
-L2
+    adc ZP_B0
+L2:
     ror             // "Stairstep" shift (catching carry from add)
     ror ZP_W0
     dex
@@ -1466,62 +1489,83 @@ loop:
 }
 """.split("\n"),
 
-
-"LIB_CSTRING_BYTE":
+"LIB_CSTRING_WORD":
 """
-LIB_CSTRING_BYTE: {
-    ldx #$ff                // Prepare for subtraction
-    sec
-!:                          // Count how many 100s
+/*
+---------------------------
+Print 16-bit decimal number
+---------------------------
+On entry, ZP_W0=number to print
+          ZP_B0=0 or pad character (eg '0' or ' ')
+On entry at PrDec16Lp1,
+          Y=(number of digits)*2-2, eg 8 for 5 digits
+On exit,  A,X,Y,ZP_W0,ZP_B0 corrupted
+Size      69 bytes
+-----------------------------------------------------------------
+*/
+LIB_CSTRING_WORD: {
+PrDec16:
+    lda #1                              // String length
+    sta ZP_B1
+    ldy #8                              // Offset to powers of ten
+
+PrDec16Lp1:
+    ldx #$ff
+    sec                                 // Start with digit=-1
+PrDec16Lp2:
+    lda ZP_W0+0
+    sbc PrDec16Tens+0,y
+    sta ZP_W0+0                         // Subtract current tens
+    lda ZP_W0+1
+    sbc PrDec16Tens+1,y
+    sta ZP_W0+1
     inx
-    sbc #100
-    bcs !-
-    adc #100
-    stx ZP_B0
-
-    ldx #$ff                // Prepare for subtraction
-    sec
-!:                          // Count how many 10s
-    inx
-    sbc #10
-    bcs !-
-    adc #10
-
-    // ZP_B0 = 100s, x=10s, a=1s
-
-    ldy #0                  // store 1s
-    ora #$30                // petscii '0'
-    sta (STACK),y
-
-    DEC16(STACK)
-    txa                     // exit if 10s and 100s are zero
-    ora ZP_B0
-    beq exit_1
-
-    txa                     // store 10s
-    ora #$30
-    sta (STACK),y
-
-    DEC16(STACK)
+    bcs PrDec16Lp2                      // Loop until <0
+    lda ZP_W0+0
+    adc PrDec16Tens+0,Y
+    sta ZP_W0+0                         // Add current tens back in
+    lda ZP_W0+1
+    adc PrDec16Tens+1,y
+    sta ZP_W0+1
+    txa
+    bne PrDec16Digit                    // Not zero, print it
     lda ZP_B0
-    beq exit_2
+    bne PrDec16Print
+    beq PrDec16Next                     // pad<>0, use it
+PrDec16Digit:
+    ldx #$30
+    stx ZP_B0                           // No more zero padding
+    ora #$30                            // Print this digit
+PrDec16Print:
+    inc ZP_B1
+    pha
+PrDec16Next:
+    dey
+    dey
+    bpl PrDec16Lp1                      // Loop for next digit
 
-    ora #$30
+    SUB16_BYTE(STACK, ZP_B1)
+    ldy ZP_B1
+!:
+    pla
     sta (STACK),y
-    DEC16(STACK)
+    dey
+    cpy #1
+    bne !-
 
-exit_3:
-    lda #3
-    .byte $2c
-exit_2:
-    lda #2
-    .byte $2c
-exit_1:
-    lda #1
-exit:
+    ldx ZP_B1
+    dex
+    txa
     sta (STACK),y
-    DEC16(STACK)
+
     rts
+
+PrDec16Tens:
+    .word 1
+    .word 10
+    .word 100
+    .word 1000
+    .word 10000
 }
 """.split("\n"),
 
@@ -1531,11 +1575,9 @@ LIB_STRING_PULL: {
     INC16(STACK)
 
     ldy #0
-    lda (STACK),y   // size
-    cmp ZP_B0
-    bcc !+          // size <= capacity
-    lda ZP_B0       // capacity
-
+    cmp (STACK),y   //
+    bcc !+          // capacity < size
+    lda (STACK),y
 !:
     sta (ZP_W0),y   // write size
     tay

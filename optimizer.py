@@ -110,7 +110,7 @@ class Optimizer:
 
 if __name__ == "__main__":
     lexer = Lexer("examples.worm")
-    tokens = lexer.scan()
+    tokens, constants = lexer.scan()
 
     parser = Parser(tokens)
     shared, literals, ast, local = parser.parse()
@@ -127,7 +127,7 @@ if __name__ == "__main__":
     print("=== AST ===")
     print(ast.tree())
 
-    compiler = Compiler(shared, literals, ast, local)
+    compiler = Compiler(shared, literals, ast, local, constants)
     code = compiler.compile()
 
     optimizer = Optimizer(code)

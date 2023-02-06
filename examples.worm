@@ -1,93 +1,29 @@
-#byte a
-#byte a @ 0x400
-#byte a=1
-#byte a[10] @ 0x400
-#byte a=[1,2,3]
+CONST SIZE = SIZE2 + 1
+CONST SIZE2 = 2
 
-#CONST SIZE = b + 1
-#CONST b = 2
+byte a=SIZE
 
-#byte f0()
-#    return 1
+ASM
+        lda #1
+    loop:
+  ; FOOBAR
+        stx   ; foobar
+        inc
+        bne SIZE
+    exit:
+END ASM
+; SIZE
 
 string[9] f(string[12] s)
-    RETURN s+"END"
+    ASM
+            lda #1
+        loop:
+ ;FOOBAR
+            stx    ;foobar
+            inc
+            bne
+        exit:
+    END ASM
+    RETURN s+"END"+SIZE
 
-debug f("START")
-
-#string[6] result = ["abc", "xyz"]
-#string[6] result = ["abc", "def"]
-
-#byte b0
-#byte b1[2]
-#byte b2=3
-#byte b3=[1,2,3]
-#string    s0
-#string[5] s1
-#string    s2[2]
-#string[5] s3[2]
-#string    s4="foo"
-#string    s5=["foo", "bar4"]
-#string[5] s6="foo"
-#string[5] s7="foobar"
-#string[5] s8=["foo", "foobar"]
-
-#byte b0
-#byte b1[SIZE]
-#byte b2=3
-#byte b3=[1,SIZE,3]
-#string    s0
-#string[SIZE] s1
-#string    s2[SIZE]
-#string[SIZE] s3[SIZE+SIZE]
-#string    s4="foo"
-#string    s5=["foo", "bar4"]
-#string[5] s6="foo"
-#string[5] s7="foobar"
-#string[5] s8=["foo", "foobar"]
-
-#CONST a = b
-#CONST b = c + 1
-#CONST c = 1
-#CONST a = b+1
-#CONST b = a+1
-
-#shared byte color = 0
-#while true
-#    inc()
-#    poke 0xd020, color
-#
-#byte inc()
-#    color = color + 1
-
-#byte print_char[10](byte c[2])
-#    byte x = 0, y = 0
-#    POKE 1024 + 40 * y + x, char
-
-#byte b0
-#byte b1=1
-#byte b2[2]
-#byte b3=[1,2]
-#string s4
-#string s5="a"
-#string s6[2]
-#string s7=["a","ab"]
-#string[5] s0
-#string[5] s1[3]
-#string[5] s2="Hey"
-#string[5] s3=["ab","b"]
-
-#byte f1()
-#  return 1
-
-#byte f2(byte a)
-#  return a
-
-#string f()
-#    return "ABC"
-#string[5] f()
-#    return "ABC"
-
-#string[32] join(string[16] left, string[16] right)
-#    return left + right
-
+debug SIZE

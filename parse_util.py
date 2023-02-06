@@ -194,6 +194,9 @@ def propagate_type(node, names):
             node.return_type = "NA"
             propagate_type(node.body, names)
 
+        elif node.type == "ASM":
+            node.return_type = "NA"
+
         elif node.type == "PEEK":
             node.return_type = "BYTE"
             propagate_type(node.addr, names)

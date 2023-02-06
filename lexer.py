@@ -10,7 +10,7 @@ reserved_words = {
     "true", "false",
     "not", "and", "or",
     "for", "if", "else", "while", "break", "continue", "return",
-    "asm",
+    "asm", "end",
     "def", "struct",
     "byte", "word", "int", "long", "string",
     "switch", "case",
@@ -96,10 +96,30 @@ class Lexer:
             text = f.read()
 
         text = self.preprocess(text)
-        return list(self.next(text))
+
+        constants = { v[1][0]: v[1][1] for v in text if v[0]=="CONST" }
+        text = [ v for v in text if v[0] != "CONST" ]
+
+        results = []
+        next_version = text
+        for round in range(5):
+            version = list(self.next(next_version))
+            next_version = []
+            for token, value in version:
+                if token == "IDENT" and value in constants:
+                    next_version.append(constants[value])
+                else:
+                    next_version.append((token, value))
+            if version == next_version:
+                return next_version, constants
+        raise SyntaxError()
+
+
 
     def preprocess(self, text):
         text = text.split("\n")
+        text = preprocess_constants(text)
+        text = preprocess_asm_blocks(text)
         text = preprocess_remove_comments(text)
         text = preprocess_remove_empty_lines(text)
         text = preprocess_remove_trailing_spaces(text)
@@ -178,22 +198,6 @@ class Lexer:
 
 
 if __name__ == "__main__":
-    text = """abc 0 0x0
-    > >> >>> >>< >= >>= >>>= >><=
-# Foo Bar
-abd#
-abc#foobar   $123
-  abc
-"h""m"
-    abc
-0x1230x456 0xff       0 0x0x   0123
-car0xdead 0b1111
-    for
-      abc xyz
-abc
-    "hello#wor'ld"
-
-"""
-    lex = Lexer(text)
-    for t in lex._next():
+    lex = Lexer("examples.worm")
+    for t in lex.scan():
         print(t)

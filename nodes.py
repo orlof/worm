@@ -73,26 +73,13 @@ class AstNode(Node):
             return self.type_in(self.left)
         else:
             raise SyntaxError("Unknown assignment target")
-    
-    def optimize_constants(self, constants, used_constants=set()):
-        if self.type == "CONST":
-            if self.name in used_constants:
-                raise SyntaxError("Circular CONST definition: %s" % self.name)
-            used_constants = set(list(used_constants) + [self.name])
-        
-        while self.type == "IDENT" and self.value in constants:
-            if self.value in used_constants:
-                raise SyntaxError("Circular CONST definition: %s" % self.value)
-            used_constants = set(list(used_constants) + [self.value])
-            value = constants[self.value].value
-            self.clear()
-            self.update(value)
 
+    def optimize_constants(self):
         for k, v in self.copy().items():
             if isinstance(v, (AstNode, AstList, AstDict)):
-                v.optimize_constants(constants, used_constants)
+                v.optimize_constants()
         self._optimize_constants()
-    
+
     def _optimize_constants(self):
         if self["type"] in ["+", "-", "*", "%", "**", "&", "|", "^", "<<", ">>", "==", "<", ">", ">=", "<=", "!=", "<>"]:
             op = self["type"]
@@ -128,10 +115,10 @@ class AstNode(Node):
         # ">>>", ">><", "<<>" cannot be optimised without knowing the width
 
 class AstList(NodeList):
-    def optimize_constants(self, constants, used_constants=set()):
+    def optimize_constants(self):
         for v in self:
             if isinstance(v, (AstNode, AstList, AstDict)):
-                v.optimize_constants(constants, used_constants)
+                v.optimize_constants()
 
     def init_variables(self):
         for v in self:
@@ -139,10 +126,10 @@ class AstList(NodeList):
                 v.init_variables()
 
 class AstDict(NodeDict):
-    def optimize_constants(self, constants, used_constants=set()):
+    def optimize_constants(self):
         for k, v in self.items():
             if isinstance(v, (AstNode, AstList, AstDict)):
-                v.optimize_constants(constants, used_constants)
+                v.optimize_constants()
 
     def init_variables(self):
         for k, v in self.items():
