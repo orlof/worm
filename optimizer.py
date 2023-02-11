@@ -49,13 +49,12 @@ class Optimizer:
                 prev_line = line
 
         # optimise rts, rts
-        code_lines = list(self.line_iterator())
-        for block in self.block_iterator(code_lines):
-            prev_line = DotWiz(src="")
-            for line in block:
-                if "rts" in line.src and "rts" in prev_line.src:
-                    self.code[line.nr] = "    // %s" % line.src[4:]
-                prev_line = line
+        code_lines = list(self.line_iterator2())
+        prev_line = DotWiz(src="")
+        for line in code_lines:
+            if line.src.strip().startswith("rts") and prev_line.src.strip().startswith("rts"):
+                self.code[line.nr] = "    // %s" % line.src[4:]
+            prev_line = line
 
         # optimise tax, txa and tay, tya
         code_lines = list(self.line_iterator2())
@@ -109,11 +108,11 @@ class Optimizer:
 
 
 if __name__ == "__main__":
-    lexer = Lexer("examples.worm")
-    tokens, constants = lexer.scan()
+    lexer = Lexer()
+    tokens, constants = lexer.scan_file("examples.worm")
 
     parser = Parser(tokens)
-    shared, literals, ast, local = parser.parse()
+    shared, literals, ast, local, data = parser.parse()
 
     print("=== SHARED ===")
     print(shared.tree())
@@ -127,7 +126,7 @@ if __name__ == "__main__":
     print("=== AST ===")
     print(ast.tree())
 
-    compiler = Compiler(shared, literals, ast, local, constants)
+    compiler = Compiler(shared, literals, ast, local, constants, data)
     code = compiler.compile()
 
     optimizer = Optimizer(code)

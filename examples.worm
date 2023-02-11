@@ -1,29 +1,7 @@
-CONST SIZE = SIZE2 + 1
-CONST SIZE2 = 2
 
-byte a=SIZE
-
-ASM
-        lda #1
-    loop:
-  ; FOOBAR
-        stx   ; foobar
-        inc
-        bne SIZE
-    exit:
-END ASM
-; SIZE
-
-string[9] f(string[12] s)
-    ASM
-            lda #1
-        loop:
- ;FOOBAR
-            stx    ;foobar
-            inc
-            bne
-        exit:
-    END ASM
-    RETURN s+"END"+SIZE
-
-debug SIZE
+DATA BYTE
+    0,1,"HELLO",
+    3,"Hello",5+1
+DATA BYTE
+    0,1,"HELLO"
+    3,4,5

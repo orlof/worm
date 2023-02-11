@@ -4,8 +4,6 @@ from lexer import Lexer, operators_arithmetic, operators_comparison
 from nodes import *
 from parser import Parser, AstNode, AstList
 
-ZP_W0 = 251
-
 def format_data(name, data):
     if type(data) == int:
         data = [data]
@@ -16,32 +14,88 @@ def format_data(name, data):
     return rows
 
 class Compiler:
-    def __init__(self, shared, literals, ast, local, constants):
+    def __init__(self, shared, literals, ast, local, constants, data):
         self.shared = shared
         self.literals = literals
         self.local = local
         self.ast = ast
         self.constants = constants
+        self.data = data
 
+        self.func_name = None
         self.names = {}
         self.code = []
 
         self.library = {}
+        self.macro = {}
 
-    def load(self, name):
+    def include_library(self, name):
         if name not in self.library:
             self.library[name] = LIBRARY[name]
-            for line in LIBRARY[name]:
-                token = line.split()
-                if len(token) >= 2:
-                    if token[0] == "jsr":
-                        if token[1].startswith("LIB_"):
-                            self.load(token[1])
+            self.include_macros(LIBRARY[name])
+            self.include_libraries(LIBRARY[name])
+
+    def include_macro(self, name):
+        if name not in self.macro:
+            self.macro[name] = MACRO[name]
+            self.include_macros(MACRO[name])
+            self.include_libraries(MACRO[name])
+
+    def include_macros(self, lines):
+        for line in lines:
+            for macro in sorted(MACRO.keys(), key=len, reverse=True):
+                if ("    %s" % macro) in line:
+                    self.include_macro(macro)
+
+    def include_libraries(self, lines):
+        for line in lines:
+            token = line.split()
+            if len(token) >= 2:
+                if token[0] == "jsr":
+                    if token[1].startswith("LIB_"):
+                        self.include_library(token[1])
+
+    def compile_dataset(self, dataset):
+        code = []
+        if "name" in dataset:
+            code += [
+                "%s:" % dataset.name.value
+            ]
+        for data in dataset.value:
+            if data.return_type == "BYTE":
+                byte = []
+                for e in data.value:
+                    if e.type in ("NUMERIC", "IDENT"):
+                        byte.append(str(e.value))
+                    elif e.type == "LITERAL":
+                        if byte:
+                            code += [
+                                "    .byte %s" % ", ".join(byte)
+                            ]
+                        byte = []
+                        code += [
+                            "    .text \"%s\"" % e.value
+                        ]
+                if byte:
+                    code += [
+                        "    .byte %s" % ", ".join(byte)
+                    ]
+            elif data.return_type == "WORD":
+                word = []
+                for e in data.value:
+                    if e.type in ("NUMERIC", "IDENT"):
+                        word.append(str(e.value))
+                if word:
+                    code += [
+                        "    .word %s" % ", ".join(word)
+                    ]
+        return code
 
     def compile(self):
         # COMPILE MAIN
         self.names = self.shared.copy()
         self.names.update(self.local)
+        self.func_name = "main"
         for node in self.ast:
             a=self.compile_code(node)
             self.code += a
@@ -49,24 +103,24 @@ class Compiler:
         # COMPILE FUNCTIONS
         for name, node in self.shared.items():
             if node.type == "DEF_FUN":
+                self.func_name = node.name
                 self.names = self.shared.copy()
                 self.names.update(node.local)
                 self.code += self.compile_function(node)
 
-        # ADD MACROS
-        self.code += ["// MACROS"]
-        self.code += MACRO
+        # ADD MACROS AND LIBRARIES
+        self.include_macros(self.code)
+        self.include_libraries(self.code)
 
-        # ADD LIBRARIES
-        self.code += ["// LIBRARIES"]
-        for line in self.code:
-            token = line.split()
-            if len(token) >= 2:
-                if token[0] == "jsr":
-                    if token[1].startswith("LIB_"):
-                        self.load(token[1])
-        for lib in self.library.values():
-            self.code += lib
+        if self.macro:
+            self.code += ["// MACROS"]
+            for macro in self.macro.values():
+                self.code += macro
+
+        if self.library:
+            self.code += ["// LIBRARIES"]
+            for lib in self.library.values():
+                self.code += lib
 
         # COMPILE LITERALS
         self.code += ["// LITERALS"]
@@ -74,6 +128,11 @@ class Compiler:
 
         for node in self.literals.values():
             self.code += self.compile_literal(node)
+
+        # COMPILE DATA
+        self.code += ["// DATA"]
+        for data in self.data:
+            self.code += self.compile_dataset(data)
 
         # COMPILE VARIABLES
         self.code += [""]
@@ -152,6 +211,24 @@ class Compiler:
             code = ["{"] + node.value + ["}"]
             return code
 
+        elif node.type == "LABEL":
+            code = [
+                "%s:" % node.name,
+            ]
+            return code
+
+        elif node.type == "GOTO":
+            code = [
+                "    jmp %s" % node.value,
+            ]
+            return code
+
+        elif node.type == "ORIGIN":
+            code = [
+                "*=%d" % node.value,
+            ]
+            return code
+
         elif node.type == "CALL":
             def_args = self.shared[node.name].args
             if len(def_args) != len(node.args):
@@ -183,51 +260,30 @@ class Compiler:
             code += [
                 "    jsr %s" % node.name
             ]
+            if self.shared[node.name].return_type == "STRING":
+                code += [
+                    "    jsr LIB_STRING_POP",
+                ]
 
             return code
 
         elif node.type == "RETURN":
-            return (
-                self.compile_expr(node.value) +
-                [
-                    "    rts"
+            code = self.compile_expr(node.value)
+            if self.names[self.func_name].return_type == "BYTE":
+                code += [
+                    "    pla",
+                    "    sta %s" % self.func_name,
+                    "    rts",
                 ]
-            )
-            # vdef = self.names["_RETURN_"]
-            # if vdef.return_type == "BYTE":
-            #     return (
-            #         self.compile_expr(node.value) +
-            #         [
-            #             "    pla",
-            #             "    sta _RETURN_",
-            #             "    rts"
-            #         ]
-            #     )
-            # elif vdef.return_type == "WORD":
-            #     return (
-            #         self.compile_expr(node.value) +
-            #         [
-            #             "    pla",
-            #             "    sta _RETURN_",
-            #             "    pla",
-            #             "    sta _RETURN_+1",
-            #             "    rts"
-            #         ]
-            #     )
-            # elif vdef.return_type == "STRING":
-            #     self.library["LIB_STRING_PULL"] = LIBRARY["LIB_STRING_PULL"]
-
-            #     return (
-            #         self.compile_expr(node.value) +
-            #         [
-            #             "    lda #%d" % vdef.capacity,
-            #             "    sta ZP_B0",
-            #             "    LOAD(_RETURN_, ZP_W0)",
-            #             "    jsr LIB_STRING_PULL",
-            #         ]
-            #     )
-            # else:
-            #     raise NotImplementedError()
+            elif self.names[self.func_name].return_type == "WORD":
+                code += [
+                    "pla",
+                    "sta %s" % self.func_name,
+                    "pla",
+                    "sta %s+1" % self.func_name,
+                    "rts",
+                ]
+            return code
 
         elif node.type == "POKE":
             return (
@@ -252,8 +308,12 @@ class Compiler:
                     "    jsr LIB_DEBUG",
                 ]
             )
+
         elif node.type == "PASS":
             return []
+
+        elif node.type == "DATASET":
+            return self.compile_dataset(node)
 
         elif node.type == "PEEK":
             code = [ "// BYTE %s" % node.type ]
@@ -281,7 +341,7 @@ class Compiler:
                     ".const KERNEL_CHROUT = $ffd2",
                     "",
                 ]
-            code += [".const %s = %s" % (name, value) for name, value in self.constants.items()]
+            code += [".const %s = %s" % (c.name, c.value) for c in self.constants]
             code += [
                     "// PREAMBLE",
                     "*=2048",
@@ -645,6 +705,22 @@ class Compiler:
             code += [
                 "    jsr %s" % node.name
             ]
+            if node.return_type == "BYTE":
+                code += [
+                    "    lda %s.%s" %(node.name, node.name),
+                    "    pha",
+                ]
+            elif self.shared[node.name].return_type == "WORD":
+                code += [
+                    "    lda %s.%s+1" %(node.name, node.name),
+                    "    pha",
+                    "    lda %s.%s" %(node.name, node.name),
+                    "    pha",
+                ]
+            elif self.shared[node.name].return_type == "STRING":
+                pass
+            else:
+                raise NotImplementedError()
 
             # if node.return_type == "BYTE":
             #     code += [
@@ -781,7 +857,7 @@ class Compiler:
                         ]
                     )
             elif node.right.return_type == "STRING":
-                code = [ "    // STRING %s" % node.type ]
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -800,7 +876,7 @@ class Compiler:
 
         elif node.type == "<":
             if node.left.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -815,7 +891,6 @@ class Compiler:
                     "    lda #1",
                     "exit:",
                     "    pha",
-                    "}",
                 ]
                 return code
             else:
@@ -823,7 +898,7 @@ class Compiler:
 
         elif node.type == "AND":
             if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "{   // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -849,7 +924,7 @@ class Compiler:
 
         elif node.type == "OR":
             if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "{  // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -875,7 +950,7 @@ class Compiler:
 
         elif node.type == "NOT":
             if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "{  // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.value)
                 code += [
                     "    pla",
@@ -894,7 +969,7 @@ class Compiler:
 
         elif node.type == "+":
             if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -910,79 +985,7 @@ class Compiler:
                 return code
 
             elif node.return_type == "WORD":
-                return (
-                    [   "    // eval left side of +"] +
-                    left +
-                    [   "    // eval right side of +"] +
-                    right +
-                    [
-                        "    // word l + r",
-                        "    pla",
-                        "    sta ZP_W0",
-                        "    pla",
-                        "    sta ZP_W0+1",
-
-                        "    clc",
-                        "    pla",
-                        "    adc ZP_W0",
-                        "    tax",
-                        "    pla",
-                        "    adc ZP_W0+1",
-                        "    pha",
-                        "    txa",
-                        "    pha",
-                    ])
-
-            elif node.return_type == "STRING":
-                code = [ "{ // STRING %s" % node.type ]
-                code += self.compile_expr(node.right)
-                code += self.compile_expr(node.left)
-                code += [
-                    "    jsr LIB_STRING_MERGE",
-                    "}"
-                ]
-                return code
-            else:
-                raise NotImplemented()
-
-        elif node.type == "-":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
-                code += self.compile_expr(node.left)
-                code += self.compile_expr(node.right)
-                code += [
-                    "    pla",
-                    "    sta ZP_W0",
-                    "    pla",
-                    "    sec",
-                    "    sbc ZP_W0",
-                    "    pha",
-                    "}",
-                ]
-                return code
-            else:
-                raise NotImplementedError()
-
-        elif node.type == "*":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
-                code += self.compile_expr(node.left)
-                code += self.compile_expr(node.right)
-                code += [
-                    "    pla",
-                    "    sta ZP_B0",
-                    "    pla",
-                    "    sta ZP_B1",
-
-                    "    jsr LIB_MUL8",
-
-                    "    lda ZP_W0",
-                    "    pha",
-                    "}",
-                ]
-                return code
-            if node.return_type == "WORD":
-                code = [ "{ // WORD %s" % node.type ]
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -990,6 +993,79 @@ class Compiler:
                     "    sta ZP_W0",
                     "    pla",
                     "    sta ZP_W0+1",
+
+                    "    clc",
+                    "    pla",
+                    "    adc ZP_W0",
+                    "    tax",
+                    "    pla",
+                    "    adc ZP_W0+1",
+                    "    pha",
+                    "    txa",
+                    "    pha",
+                    ]
+                return code
+
+            elif node.return_type == "STRING":
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
+                code += self.compile_expr(node.right)
+                code += self.compile_expr(node.left)
+                code += [
+                    "    jsr LIB_STRING_MERGE",
+                ]
+                return code
+            else:
+                raise NotImplemented()
+
+        elif node.type == "-":
+            if node.return_type == "BYTE":
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                ]
+                code += self.compile_expr(node.left)
+                code += [
+                    "    pla",
+                    "    sec",
+                    "    sbc ZP_W0",
+                    "    pha",
+                ]
+                return code
+            else:
+                raise NotImplementedError()
+
+        elif node.type == "*":
+            if node.return_type == "BYTE":
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
+                code += self.compile_expr(node.left)
+                code += [
+                    "    pla",
+                    "    sta ZP_B0",
+                ]
+                code += self.compile_expr(node.right)
+                code += [
+                    "    pla",
+                    "    sta ZP_B1",
+
+                    "    jsr LIB_MUL8",
+
+                    "    lda ZP_W0",
+                    "    pha",
+                ]
+                return code
+            if node.return_type == "WORD":
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
+                code += self.compile_expr(node.left)
+                code += [
+                    "    pla",
+                    "    sta ZP_W0",
+                    "    pla",
+                    "    sta ZP_W0+1",
+                ]
+                code += self.compile_expr(node.right)
+                code += [
                     "    pla",
                     "    sta ZP_W1",
                     "    pla",
@@ -1001,7 +1077,6 @@ class Compiler:
                     "    pha",
                     "    lda ZP_DW+1",
                     "    pha",
-                    "}",
                 ]
                 return code
             else:
@@ -1009,33 +1084,22 @@ class Compiler:
 
         elif node.type == "/":
             if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
+                code += [
+                    "    //  ZP_B0 / ZP_B1",
+                    "    pla",
+                    "    sta ZP_B0",
+                ]
                 code += self.compile_expr(node.right)
                 code += [
                     "    pla",
-                    "    sta ZP_W0+1",
-                    "    pla",
-                    "    sta ZP_W0",
+                    "    sta ZP_B1",
 
-                    "//  ZP_W0 / ZP_W0+1",
-                    "    lda #0",
-                    "    ldx #8",
-                    "    asl ZP_W0",
-                    "l1:",
-                    "    rol",
-                    "    cmp ZP_W0+1",
-                    "    bcc l2",
-                    "    sbc ZP_W0+1",
-                    "l2:",
-                    "    rol ZP_W0",
-                    "    dex",
-                    "    bne l1",
-                    "// ZP_W0 quotient, ZP_W0+1 remainder",
+                    "    jsr LIB_DIV8",
 
-                    "    lda ZP_W0"
+                    "    lda ZP_B0",
                     "    pha",
-                    "}",
                 ]
                 return code
             else:
@@ -1043,33 +1107,22 @@ class Compiler:
 
         elif node.type == "%":
             if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+                code = [ "    // %s %s" % (node.return_type, node.type) ]
                 code += self.compile_expr(node.left)
+                code += [
+                    "    //  ZP_B0 / ZP_B1",
+                    "    pla",
+                    "    sta ZP_B0",
+                ]
                 code += self.compile_expr(node.right)
                 code += [
                     "    pla",
-                    "    sta ZP_W0+1",
-                    "    pla",
-                    "    sta ZP_W0",
+                    "    sta ZP_B1",
 
-                    "//  ZP_W0 / ZP_W0+1",
-                    "    lda #0",
-                    "    ldx #8",
-                    "    asl ZP_W0",
-                    "l1:",
-                    "    rol",
-                    "    cmp ZP_W0+1",
-                    "    bcc l2",
-                    "    sbc ZP_W0+1",
-                    "l2:",
-                    "    rol ZP_W0",
-                    "    dex",
-                    "    bne l1",
-                    "// ZP_W0 quotient, ZP_W0+1 remainder",
+                    "    jsr LIB_DIV8",
 
-                    "    lda ZP_W0+1"
+                    "    lda ZP_B1",
                     "    pha",
-                    "}",
                 ]
                 return code
             else:
@@ -1267,7 +1320,8 @@ class Compiler:
         else:
             raise NotImplementedError()
 
-MACRO = \
+MACRO = {
+"LOAD":
 """
 .macro LOAD(Addr, ZP) {
     lda #<Addr
@@ -1275,14 +1329,20 @@ MACRO = \
     lda #>Addr
     sta ZP+1
 }
+""".split("\n"),
 
+"INC16":
+"""
 .macro INC16(Addr) {
     inc Addr
     bne !+
     inc Addr+1
 !:
 }
+""".split("\n"),
 
+"ADD16_BYTE":
+"""
 .macro ADD16_BYTE(wAddr, bAddr) {
     clc
     lda bAddr
@@ -1292,7 +1352,10 @@ MACRO = \
     inc wAddr+1
 exit:
 }
+""".split("\n"),
 
+"SUB16_BYTE":
+"""
 .macro SUB16_BYTE(wAddr, bAddr) {
     sec
     lda wAddr
@@ -1302,7 +1365,10 @@ exit:
     dec wAddr+1
 exit:
 }
+""".split("\n"),
 
+"DEC16":
+"""
 .macro DEC16(Addr) {
     lda Addr
     bne !+
@@ -1310,18 +1376,25 @@ exit:
 !:
     dec Addr
 }
+""".split("\n"),
 
+"STR_PUSH_FROM":
+"""
 .macro STR_PUSH_FROM(Addr) {
     LOAD(Addr, ZP_W0)
     jsr LIB_STRING_PUSH
 }
+""".split("\n"),
 
+"STR_PULL_TO":
+"""
 .macro STR_PULL_TO(Addr) {
     // capacity in a
     LOAD(Addr, ZP_W0)
     jsr LIB_STRING_PULL
 }
 """.split("\n")
+}
 
 LIBRARY = {
 "LIB_DEBUG":
@@ -1401,10 +1474,31 @@ L2:
 }
 """.split("\n"),
 
+"LIB_DIV8":
+"""
+LIB_DIV8 {
+    // ZP_B0 divident, ZP_B1 divisor
+    lda #0
+    ldx #8
+    asl ZP_B0
+l1:
+    rol
+    cmp ZP_B1
+    bcc l2
+    sbc ZP_B1
+l2:
+    rol ZP_B0
+    dex
+    bne l1
+    // ZP_B0 quotient, ZP_B1 remainder
+    rts
+}
+""".split("\n"),
+
 "LIB_MUL8":
 """
 LIB_MUL8: {
-    lda #0          // Initialize RESULT to 0
+    lda #0          // Initialize ZP_W0 to 0
     ldx #8          // There are 8 bits in ZP_B1
 L1:
     lsr ZP_B1       // Get low bit of ZP_B1

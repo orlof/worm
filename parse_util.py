@@ -29,7 +29,10 @@ def propagate_type(node, names):
                 propagate_type(v, names)
 
         if node.type == "IDENT":
-            node.return_type = names[node.value].return_type
+            if node.value in names:
+                node.return_type = names[node.value].return_type
+            else:
+                node.return_type = "NA"
 
         elif node.type == "LITERAL":
             node.return_type = "STRING"
@@ -225,7 +228,13 @@ def propagate_type(node, names):
                 node.expr = AstNode(type="CBYTE", return_type="BYTE", value=node.expr)
             propagate_type(node.body, names)
 
-        elif node.type in ("START", "END"):
+        elif node.type == "DATASET":
+            propagate_type(node.value, names)
+
+        elif node.type == "DATA":
+            propagate_type(node.value, names)
+
+        elif node.type in ("START", "END", "LABEL", "GOTO", "ORIGIN"):
             node.return_type = "NA"
 
         else:

@@ -20,13 +20,17 @@ class Parser:
         self.scope.append(AstNode(
             type="DEF_FUN", name="MAIN",
             return_type="NA",
-            local=AstDict(), ast=AstList(),
+            local=AstDict(), ast=AstList(), data=AstList()
         ))
         #self.ast = AstList()
 
     @property
     def ast(self):
         return self.scope[-1].ast
+
+    @property
+    def data(self):
+        return self.scope[-1].data
 
     @ast.setter
     def ast(self, value):
@@ -90,6 +94,7 @@ class Parser:
         self.shared.optimize_constants()
         self.local.optimize_constants()
         self.ast.optimize_constants()
+        self.data.optimize_constants()
 
         # INITIALIZE VARIABLES
         assert len(self.scope) == 1
@@ -113,7 +118,7 @@ class Parser:
             if node.type == "DEF_FUN":
                 self.literals.update(collect_literals(node.ast))
 
-        return self.shared, self.literals, self.ast, self.local
+        return self.shared, self.literals, self.ast, self.local, self.data
 
     def suite(self):
         if self.token != "INDENT":
@@ -125,6 +130,21 @@ class Parser:
 
         self.advance()
         return suite
+
+    def parse_data(self):
+        assert self.token in ("BYTE", "WORD")
+        return_type = self.token
+        self.advance()
+
+        if self.token == "INDENT":
+            self.advance()
+            value = AstList()
+            while self.token != "DEDENT":
+                value += self.expr_list()
+            self.advance()
+            return AstNode(type="DATA", return_type=return_type, value=value)
+        else:
+            return AstNode(type="DATA", return_type=return_type, value=self.expr_list())
 
     def stmt(self):
         if self.token in ("BYTE", "WORD", "STRING"):
@@ -155,7 +175,7 @@ class Parser:
                     capacity=capacity,
                     size=1,
                     args = self.ast_arg_list(),
-                    local=AstDict(), ast=AstList()
+                    local=AstDict(), ast=AstList(), data=AstList()
                 )
                 self.scope.append(func)
 
@@ -164,6 +184,11 @@ class Parser:
 
                 # ADD ARGS TO LOCALS
                 self.local.update({node.name: node for node in func.args})
+                self.local[name] = AstNode(type="AST_ARG", name=name,
+                    return_type=token,
+                    capacity=capacity,
+                    size=1,
+                )
 
                 self.ast += self.suite()
 
@@ -200,6 +225,56 @@ class Parser:
                 return None
             else:
                 raise NotImplemented()
+
+        elif self.token == "DATA":
+            self.advance()
+            if self.token in ("BYTE", "WORD", "INDENT"):
+                # INLINE
+                data = AstNode(type="DATASET", return_type="NA", value=AstList())
+                if self.token == "INDENT":
+                    self.advance()
+                    while self.token != "DEDENT":
+                        data.value.append(self.parse_data())
+                    self.advance()
+                else:
+                    data.value.append(self.parse_data())
+
+                return data
+
+            else:
+                # DATA SEGMENT
+                data = AstNode(type="DATASET", return_type="NA", name=self.expr(), value=AstList())
+                if self.token == "INDENT":
+                    self.advance()
+                    while self.token != "DEDENT":
+                        data.value.append(self.parse_data())
+                    self.advance()
+                else:
+                    data.value.append(self.parse_data())
+
+                self.data.append(data)
+                return None
+
+        elif self.token == "IDENT" and self.next_token == ":":
+            # LABEL
+            name = self.value
+            self.advance()
+            self.advance()
+            return AstNode(type="LABEL", name=name)
+
+        elif self.token == "GOTO":
+            self.advance()
+            assert self.token == "IDENT"
+            value = self.value
+            self.advance()
+            return AstNode(type="GOTO", return_type = "NA", value=value)
+
+        elif self.token == "ORIGIN":
+            self.advance()
+            assert self.token in ("NUMERIC", "IDENT")
+            value = self.value
+            self.advance()
+            return AstNode(type="ORIGIN", return_type = "NA", value=value)
 
         elif self.token == "ASM":
             self.advance()

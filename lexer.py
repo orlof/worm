@@ -1,4 +1,6 @@
+import functools
 from preprocessor import *
+from nodes import *
 
 def is_alphanumeric(c):
     return c.isalpha() or c.isdigit() or c in "_"
@@ -16,7 +18,7 @@ reserved_words = {
     "switch", "case",
     "fast", "shared",
     "const", "poke", "peek",
-    "debug"
+    "debug", "data", "inline", "goto", "origin"
 }
 
 operators_arithmetic = [
@@ -79,42 +81,53 @@ def is_binary(buf):
             return True
     return False
 
-class Name:
-    def __init__(self, value):
-        self.value = value
-
-    def __str__(self):
-        return "__NAME__[%s]" % self.value
+def cmp_const(left, right):
+    if left.name in right.idents:
+        return -1
+    if right.name in left.idents:
+        return 1
+    return 0
 
 class Lexer:
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self):
         self.depth = []
 
-    def scan(self):
-        with open(self.filename, "r") as f:
-            text = f.read()
-
+    def scan_text(self, text):
         text = self.preprocess(text)
 
-        constants = { v[1][0]: v[1][1] for v in text if v[0]=="CONST" }
-        text = [ v for v in text if v[0] != "CONST" ]
+        constants=AstList()
+        for v in text:
+            if type(v) == tuple:
+                token, value = v
+                if token == "CONST":
+                    name, value = value
+                    node = AstNode(name=name, value=value, idents=[n[1] for n in Lexer().scan_text(value)[0] if n[0] == "IDENT"])
+                    constants.append(node)
 
+        constants.sort(key=functools.cmp_to_key(cmp_const))
+
+        text = [v for v in text if v[0] != "CONST"]
+
+        const = {c.name: c.value for c in constants}
         results = []
         next_version = text
         for round in range(5):
             version = list(self.next(next_version))
             next_version = []
             for token, value in version:
-                if token == "IDENT" and value in constants:
-                    next_version.append(constants[value])
+                if token == "IDENT" and value in const:
+                    next_version.append(const[value])
                 else:
                     next_version.append((token, value))
             if version == next_version:
                 return next_version, constants
         raise SyntaxError()
 
+    def scan_file(self, filename):
+        with open(filename, "r") as f:
+            text = f.read()
 
+        return self.scan_text(text)
 
     def preprocess(self, text):
         text = text.split("\n")
@@ -198,6 +211,7 @@ class Lexer:
 
 
 if __name__ == "__main__":
-    lex = Lexer("examples.worm")
-    for t in lex.scan():
+
+    # for t in Lexer().scan_text("f(\"huuhaa\", 5) + automatic"):
+    for t in Lexer().scan_file("examples.worm"):
         print(t)

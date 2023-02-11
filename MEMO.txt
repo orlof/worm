@@ -40,7 +40,30 @@ string
   string[20] b="Hello World"
   string[20] b=["Hello", "World"]
 
-DATA AS BYTE
+DATA MySprite BYTE 0,1,2
+
+DATA MySprite
+    BYTE 0,1,2
+    WORD 0,1,2
+
+AstNode(type="DATASET", name="MySprite", value=AstList
+    AstNode(type="DATA",
+        return_type="BYTE"
+        value=AstList(NUMERIC, IDENT, LITERAL)
+
+INLINE BYTE 0,1,2
+
+INLINE
+    BYTE 0,1,2
+    WORD 0,1,2
+AstNode(type="INLINE", value=AstList
+    AstNode(type="DATA",
+        return_type="BYTE"
+        value=AstList(NUMERIC, IDENT, LITERAL)
+
+
+
+encoding
 word
 int
 long
@@ -57,3 +80,9 @@ switch
 RAJOITTEET
 - one dimensional arrays
 - no arrays in function arguments or return values
+
+byte b=1
+byte
+data byte 0,0,"hello world"
+data text petscii-upper "Hello World"
+byte 1,2,3,4,5
