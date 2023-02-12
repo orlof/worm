@@ -1,7 +1,12 @@
 
-DATA BYTE
-    0,1,"HELLO",
-    3,"Hello",5+1
-DATA BYTE
-    0,1,"HELLO"
-    3,4,5
+CONST
+    WIN_ACTIVE = 1
+    WIN_NOT_ACTIVE = 12
+
+BYTE
+    InventorySelected
+    ShipyardSelected
+
+STRING[6] SystemTitle(5) = [
+    "Weapon", "Engine", "Gyro", "Armor", "Cargo"
+]

@@ -11,6 +11,35 @@ def transform_asm(src):
             src[index] = line[left_margin:].rstrip().replace(";", "//", 1)
     return src
 
+def preprocess_backslash_indent_dedent(text):
+    # NOT IMPLEMENTED
+    buf = []
+    bs = False
+    depth = 0
+
+    for line in text:
+        if not bs:
+            if type(line) == str and line.endswith("\\"):
+                bs = True
+                buf.append(line[:-1])
+                continue
+            else:
+                if depth > 0:
+                    if type(line) == tuple and line[0] == "DEDENT":
+                        depth -= 1
+                        continue
+                buf.append(line)
+                continue
+        else:
+            if type(line) == tuple and line[0] == "INDENT":
+                bs = False
+                depth += 1
+                continue
+            else:
+                raise SyntaxError()
+
+    return buf
+
 def preprocess_asm_blocks(text):
     buf = []
     asm = False

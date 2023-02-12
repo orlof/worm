@@ -18,14 +18,6 @@
 
     // PROGRAM CODE
 
-    .byte 0, 1
-    .text "HELLO"
-    .byte 3
-    .text "Hello"
-    .byte 6
-    .byte 0, 1
-    .text "HELLO"
-    .byte 3, 4, 5
 
     // POSTAMBLE
     sei
@@ -45,14 +37,10 @@
 
 // LITERALS
 .encoding "petscii_upper"
-STR_eb61eead90e3b899c6bcbe27ac581660:
-    .byte 5
-    .text "HELLO"
-STR_8b1a9953c4611296a827abf8c47804d7:
-    .byte 5
-    .text "Hello"
 // DATA
 
 // SHARED
 
 // MAIN LOCALS
+arr:
+    .byte $00, $00, $00, $00, $00

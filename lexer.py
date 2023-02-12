@@ -42,6 +42,14 @@ def is_operator(buf):
     buf = "".join(buf)
     return buf in operators
 
+def is_opening(buf):
+    buf = "".join(buf)
+    return buf in "([{"
+
+def is_closing(buf):
+    buf = "".join(buf)
+    return buf in ")]}"
+
 def is_ident(buf):
     if buf:
         if buf[0].isalpha():
@@ -131,13 +139,14 @@ class Lexer:
 
     def preprocess(self, text):
         text = text.split("\n")
-        text = preprocess_constants(text)
+        #text = preprocess_constants(text)
         text = preprocess_asm_blocks(text)
         text = preprocess_remove_comments(text)
         text = preprocess_remove_empty_lines(text)
         text = preprocess_remove_trailing_spaces(text)
         text = preprocess_replace_indent_dedent(text)
         text = preprocess_literal_strings(text)
+        #text = preprocess_backslash_indent_dedent(text)
         #text = preprocess_idents(text)
         #text = preprocess_literal_0x(text)
         #text = preprocess_remove_empty_lines(text)
@@ -174,10 +183,10 @@ class Lexer:
                 #    buf.append(c)
 
                 elif is_operator(buf):
-                    if buf in ["(", "[", "{"]:
+                    if is_opening(buf):
                         self.depth += buf
-                    if buf in [")", "]", "}"]:
-                        if not self.depth or c != self.depth.pop():
+                    if is_closing(buf):
+                        if not self.depth:
                             raise SyntaxError("Mismatch () [] or {}")
                     yield ("".join(buf), None)
                     buf = [c] if c else []
