@@ -1,7 +1,7 @@
-from dotwiz import DotWiz
+from box import Box
 
 
-class Node(DotWiz):
+class Node(Box):
     def __str__(self):
         result = []
         if "node" in self:
@@ -119,24 +119,17 @@ class AstNode(Node):
                 self.value = value
         # ">>>", ">><", "<<>" cannot be optimised without knowing the width
 
-    def fix_type_propagation(self, names, reference_names=None):
-        if reference_names is None:
-            reference_names = names
-
+    def fix_type_propagation(self, names):
         if isinstance(self, AstList):
             for n in self:
-                n.fix_type_propagation(names, reference_names)
+                n.fix_type_propagation(names)
             return
 
 #        for node in self.values():
 #            if isinstance(node, (AstNode, AstList)):
 #                node.fix_type_propagation(names)
 
-        if self.node == "IDENT":
-            assert self.value in names
-            self.type = reference_names[self.value].type
-
-        elif self.node == "LITERAL":
+        if self.node == "LITERAL":
             self.type = "STRING"
 
         elif self.node == "NUMERIC":
@@ -150,27 +143,35 @@ class AstNode(Node):
                 self.type = "LONG"
 
         elif self.node == "REFERENCE":
-            target_module = reference_names[self.left.value]
-            assert target_module.node == "MODULE", "Left side of reference must be a module"
+            reference = self
+            reference_module = None
+            reference_names = names
+            while reference.node == "REFERENCE":
+                reference_module = reference_names[reference.left.value]
+                assert reference_module.node == "MODULE", "Left side of reference must be a module"
+                reference_names = reference_module.get_names()
+                reference = reference.right
 
-            reference_names = AstNode()
-            reference_names.update(target_module.shared.vars)
-            reference_names.update(target_module.shared.data)
-            reference_names.update(target_module.module.imports)
-            reference_names.update(target_module.module.funcs)
-            reference_names.update(target_module.module.vars)
-            reference_names.update(target_module.module.data)
+            self.clear()
+            self.update(reference)
+            self.ns = reference_module
+            self.fix_type_propagation(names)
 
-            self.type = self.right.fix_type_propagation(names, reference_names)
+        elif self.node == "IDENT":
+            left_names = self.ns.get_names() if "ns" in self else names
+            assert self.value in left_names, "'%s' not found in %s" % (self.value, self.ns.filename)
+            self.type = left_names[self.value].type
 
         elif self.node == "SUBSCRIPTION":
-            self.type = self.left.fix_type_propagation(names, reference_names)
+            left_names = self.ns.get_names() if "ns" in self else names
+            self.type = self.left.fix_type_propagation(left_names)
+
             assert self.type in ("STRING", "BYTE", "WORD", "INT", "LONG")
 
             self.index_type = self.right.fix_type_propagation(names)
             if self.type == "STRING":
                 if self.left.node == "IDENT":
-                    cvar = reference_names[self.left.value]
+                    cvar = left_names[self.left.value]
                     if cvar.size > 1:
                         # array of strings
                         if self.index_type != "WORD":
@@ -185,6 +186,17 @@ class AstNode(Node):
                     # string, but not ident
                     if self.index_type != "BYTE":
                         self.right = AstNode(node="CBYTE", type="BYTE", value=self.right)
+
+        elif self.node == "CALL":
+            left_names = self.ns.get_names() if "ns" in self else names
+            self.type = self.left.fix_type_propagation(left_names)
+
+            self.type = left_names[self.name].type
+            for n in range(len(self.args)):
+                arg_expr, arg_def = self.args[n], left_names[self.name].args[n]
+                arg_type = arg_expr.fix_type_propagation(names)
+                if arg_type != arg_def.type:
+                    self.args[n] = AstNode(node="C%s" % arg_def.type, type=arg_def.type, value=self.args[n])
 
         elif self.node in ("CSTRING", "CINT", "CBYTE", "CWORD", "CLONG"):
             assert self.type == self.node[1:]
@@ -278,14 +290,6 @@ class AstNode(Node):
             self.type = "BYTE"
             self.left.fix_type_propagation(names)
             self.right.fix_type_propagation(names)
-
-        elif self.node == "CALL":
-            self.type = reference_names[self.name].type
-            for n in range(len(self.args)):
-                arg_expr, arg_def = self.args[n], reference_names[self.name].args[n]
-                arg_type = arg_expr.fix_type_propagation(names)
-                if arg_type != arg_def.type:
-                    self.args[n] = AstNode(node="C%s" % arg_def.type, type=arg_def.type, value=self.args[n])
 
         elif self.node == "RETURN":
             self.type = "NA"  # names["_RETURN_"].type

@@ -42,8 +42,8 @@ class Compiler:
                     if token[1].startswith("LIB_"):
                         self.include_library(token[1])
 
-    @classmethod
-    def compile_dataset(cls, dataset):
+    @staticmethod
+    def compile_dataset(dataset):
         code = []
         if "name" in dataset:
             code += [
@@ -79,28 +79,33 @@ class Compiler:
                     ]
         return code
 
-    def compile(self, func):
+    def compile_function(self, func):
         self.func_name = func.name
         self.names.update(func.vars)
         self.names.update(func.data)
 
-        code = []
-        code += ["// %s" % func.name]
+        code = [
+            "",
+        ]
         for node in func.code:
             asm = self.compile_code(node)
             code += asm
 
+        code += ["    rts"]
+
         # COMPILE DATA
-        code += [""]
-        code += ["// DATA"]
-        for data in func.data:
-            code += self.compile_dataset(data)
+        if func.data:
+            code += [""]
+            code += ["    // DATA"]
+            for data in func.data:
+                code += self.compile_dataset(data)
 
         # COMPILE VARIABLES
-        code += [""]
-        code += ["// VARIABLES"]
-        for var in func.vars.values():
-            code += self.compile_variable(var)
+        if func.vars:
+            code += [""]
+            code += ["    // VARIABLES"]
+            for var in func.vars.values():
+                code += self.compile_variable(var)
 
         return code
 
@@ -161,27 +166,6 @@ class Compiler:
 
         return self.code
 
-    def compile_function(self, func):
-        code = [
-            "%s: {" % func.name,
-            "// CODE"
-        ]
-
-        for node in func.ast:
-            code += self.compile_code(node)
-
-        code += [
-            "    rts",
-            "// VARIABLES"
-        ]
-
-        for node in func.local.values():
-            code += self.compile_variable(node)
-
-        code += [ "}" ]
-
-        return code
-
     def compile_code(self, node):
         if node.node == "LIST":
             assert False
@@ -190,36 +174,13 @@ class Compiler:
                 nodes += self.compile_code(n)
             return nodes
 
-        elif node.node == "CBYTE":
-            if node.value.type == "WORD":
-                return (
-                    self.compile_expr(node.value) +
-                    [
-                        "    pla",
-                        "    tax",
-                        "    pla",
-                        "    txa",
-                        "    pha",
-                    ]
-                )
-            else:
-                raise NotImplementedError()
+        elif node.node == "START":
+            return [
+            ]
 
-        elif node.node == "CWORD":
-            if node.value.type == "BYTE":
-                return (
-                    self.compile_expr(node.value) +
-                    [
-                        "    pla",
-                        "    tax",
-                        "    lda #0",
-                        "    pha",
-                        "    txa",
-                        "    pha",
-                    ]
-                )
-            else:
-                raise NotImplementedError()
+        elif node.node == "END":
+            return [
+            ]
 
         elif node.node == "ASM":
             code = ["{"] + node.value + ["}"]
@@ -244,7 +205,8 @@ class Compiler:
             return code
 
         elif node.node == "CALL":
-            def_args = self.shared[node.name].args
+            left_names = node.ns.get_names() if "ns" in node else self.names
+            def_args = left_names[node.name].args
             if len(def_args) != len(node.args):
                 raise SyntaxError("%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args)))
 
@@ -271,10 +233,16 @@ class Compiler:
                 else:
                     raise NotImplementedError()
 
-            code += [
-                "    jsr %s" % node.name
-            ]
-            if self.shared[node.name].type == "STRING":
+            if "ns" in node:
+                code += [
+                    "    jsr %s.%s" % (node.ns.name, node.name)
+                ]
+            else:
+                code += [
+                    "    jsr %s" % node.name
+                ]
+
+            if self.names[node.name].type == "STRING":
                 code += [
                     "    jsr LIB_STRING_POP",
                 ]
@@ -343,16 +311,6 @@ class Compiler:
                 "    pha",
             ]
 
-        elif node.node == "START":
-            return [
-                "// START OF MODULE"
-            ]
-
-        elif node.node == "END":
-            return [
-                "// END OF MODULE"
-            ]
-
         elif node.node == "WHILE":
             code = []
             code += [
@@ -361,7 +319,7 @@ class Compiler:
             ]
 
             if node.expr.node == "NUMERIC" and node.expr.value == 1:
-                code += [ "suite:" ]
+                code += ["suite:"]
             else:
                 code += self.compile_expr(node.expr)
                 code += [
@@ -435,99 +393,103 @@ class Compiler:
                 nodes += self.compile_expr(rnode)
 
             for lnode in node.left[::-1]:
+                names = lnode.ns.get_names() if "ns" in lnode else self.names
                 if lnode.node == "IDENT":
-                    cvar = self.names[lnode.value]
-                    if cvar.type == "BYTE":
+                    var_def = names[lnode.value]
+                    name = "%s.%s" % (names.name, var_def.name) if "ns" in lnode else var_def.name
+                    if var_def.type == "BYTE":
                         nodes += [
                             "    // assign to byte ident",
                             "    pla",
-                            "    sta %s" % cvar.name,
+                            "    sta %s" % name,
                         ]
-                    elif cvar.type == "WORD":
+                    elif var_def.type == "WORD":
                         nodes += [
                             "    // assign to word ident",
                             "    pla",
-                            "    sta %s" % cvar.name,
+                            "    sta %s" % name,
                             "    pla",
-                            "    sta %s+1" % cvar.name,
+                            "    sta %s+1" % name,
                         ]
-                    elif cvar.type == "STRING":
+                    elif var_def.type == "STRING":
                         nodes += [
                             "    // assign string",
-                            "    lda #%d" % cvar.capacity,
-                            "    STR_PULL_TO(%s)" % cvar.name,
+                            "    lda #%d" % var_def.capacity,
+                            "    STR_PULL_TO(%s)" % name,
                         ]
                     else:
                         raise NotImplementedError()
 
                 elif lnode.node == "SUBSCRIPTION":
-                    cvar = self.names[lnode.left.value]
-                    if cvar.type == "BYTE" and cvar.index_type == "BYTE":
+                    var_def = names[lnode.left.value]
+                    name = "%s.%s" % (names.name, var_def.name) if "ns" in lnode else var_def.name
+                    if var_def.type == "BYTE" and var_def.index_type == "BYTE":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // byte[byte]=byte",
                             "    pla",
                             "    tax",
                             "    pla",
-                            "    sta %s,x" % cvar.name,
+                            "    sta %s,x" % name,
                         ]
-                    elif cvar.type == "BYTE" and cvar.index_type == "WORD":
+                    elif var_def.type == "BYTE" and var_def.index_type == "WORD":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // byte[word]=byte",
                             "    pla",
                             "    clc",
-                            "    adc #<%s" % cvar.name,
+                            "    adc #<%s" % name,
                             "    sta ZP_W0",
 
                             "    pla",
-                            "    adc #>%s" % cvar.name,
+                            "    adc #>%s" % name,
                             "    sta ZP_W0+1",
 
                             "    pla",
                             "    ldy #0",
                             "    sta (ZP_W0),y"
                         ]
-                    elif cvar.type == "WORD" and cvar.index_type == "BYTE":
+                    elif var_def.type == "WORD" and var_def.index_type == "BYTE":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // word[byte]=word",
                             "    pla",
                             "    tax",
                             "    pla",
-                            "    sta %s_lo,x" % cvar.name,
+                            "    sta %s_lo,x" % name,
                             "    pla",
-                            "    sta %s_hi,x" % cvar.name,
+                            "    sta %s_hi,x" % name,
                         ]
-                    elif cvar.type == "WORD" and cvar.index_type == "WORD":
+                    elif var_def.type == "WORD" and var_def.index_type == "WORD":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // word[word]=word",
                             "    pla",
                             "    clc",
-                            "    adc #<%s_lo" % cvar.name,
+                            "    adc #<%s_lo" % name,
                             "    sta ZP_W0",
 
                             "    pla",
-                            "    adc #>%s_lo" % cvar.name,
+                            "    adc #>%s_lo" % name,
                             "    sta ZP_W0+1",
 
                             "    pla",
                             "    ldy #0",
                             "    sta (ZP_W0),y",
 
-                            "    lda #%d" % ((cvar.size >> 8) & 0xff),
+                            "    lda #%d" % ((var_def.size >> 8) & 0xff),
                             # "    clc",
                             "    adc ZP_W0+1",
                             "    sta ZP_W0+1",
 
                             "    pla",
-                            "    ldy #%d" % (cvar.size & 0xff),
+                            "    ldy #%d" % (var_def.size & 0xff),
                             "    sta (ZP_W0),y"
                         ]
             return nodes
 
-    def compile_literal(self, node):
+    @staticmethod
+    def compile_literal(node):
         assert node.node == "LITERAL"
 
         return (
@@ -536,8 +498,8 @@ class Compiler:
             ["    .text \"%s\"" % node.value]
         )
 
-    @classmethod
-    def compile_variable(cls, node):
+    @staticmethod
+    def compile_variable(node):
         assert node.node == "VARIABLE"
 
         if node.type == "BYTE":
@@ -576,7 +538,7 @@ class Compiler:
                     "    pha",
                 ]
             else:
-                raise SyntaxError("Invalid type: %s" + out_type)
+                raise SyntaxError("Invalid type: %s" + node.type)
 
         elif node.node == "LITERAL":
             return [
@@ -584,27 +546,29 @@ class Compiler:
             ]
 
         elif node.node == "IDENT":
-            ident = self.names[node.value]
+            if "ns" in node:
+                ident = node.ns.get_names()[node.value]
+                name = "%s.%s" % (node.ns.name, ident.name)
+            else:
+                ident = self.names[node.value]
+                name = ident.name
 
             if ident.type == "BYTE":
-                # color
                 return [
-                    "    // push byte value of %s to stack" % ident.name,
-                    "    lda %s" % ident.name,
+                    "    lda %s" % name,
                     "    pha",
                 ]
             elif ident.type == "WORD":
                 return [
-                    "    // cword to stack",
-                    "    lda %s+1" % ident.name,
+                    "    lda %s+1" % name,
                     "    pha",
-                    "    lda %s" % ident.name,
+                    "    lda %s" % name,
                     "    pha",
                 ]
             elif ident.type == "STRING":
                 if ident.size == 1:
                     return [
-                        "    STR_PUSH_FROM(%s)" % ident.name,
+                        "    STR_PUSH_FROM(%s)" % name,
                     ]
                 else:
                     pass
@@ -657,51 +621,73 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
+        elif node.node == "CBYTE":
+            if node.value.type == "WORD":
+                return (
+                    self.compile_expr(node.value) +
+                    [
+                        "    pla",
+                        "    tax",
+                        "    pla",
+                        "    txa",
+                        "    pha",
+                    ]
+                )
+            else:
+                raise NotImplementedError()
+
         elif node.node == "CALL":
-            def_args = self.shared[node.name].args
-            if len(def_args) != len(node.args):
-                raise SyntaxError("%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args)))
+            names = node.ns.get_names() if "ns" in node else self.names
+            def_args = names[node.name].args
+            assert len(def_args) == len(node.args), "%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args))
 
             code = []
             for call_arg, def_arg in zip(node.args, def_args):
+                if "ns" in node:
+                    name = "%s.%s.%s" % (node.ns.name, node.name, def_arg.name)
+                else:
+                    name = "%s.%s" % (node.name, def_arg.name)
+
                 code += self.compile_expr(call_arg)
                 if call_arg.type == "BYTE":
                     code += [
                         "    pla",
-                        "    sta %s.%s" % (node.name, def_arg.name),
+                        "    sta %s" % name,
                     ]
                 elif call_arg.type == "WORD":
                     code += [
                         "    pla",
-                        "    sta %s.%s" % (node.name, def_arg.name),
+                        "    sta %s" % name,
                         "    pla",
-                        "    sta %s.%s+1" % (node.name, def_arg.name),
+                        "    sta %s+1" % name,
                     ]
                 elif call_arg.type == "STRING":
                     code += [
                         "    lda #%d" % def_arg.capacity,
-                        "    STR_PULL_TO(%s.%s)" % (node.name, def_arg.name),
+                        "    STR_PULL_TO(%s)" % name,
                     ]
                 else:
                     raise NotImplementedError()
 
+            name = "%s.%s" % (node.ns.name, node.name) if "ns" in node else node.name
             code += [
-                "    jsr %s" % node.name
+                "    jsr %s" % name
             ]
+
             if node.type == "BYTE":
                 code += [
-                    "    lda %s.%s" %(node.name, node.name),
+                    "    lda %s.%s" %(name, node.name),
                     "    pha",
                 ]
-            elif self.shared[node.name].type == "WORD":
+            elif node.type == "WORD":
                 code += [
-                    "    lda %s.%s+1" %(node.name, node.name),
+                    "    lda %s.%s+1" %(name, node.name),
                     "    pha",
-                    "    lda %s.%s" %(node.name, node.name),
+                    "    lda %s.%s" %(name, node.name),
                     "    pha",
                 ]
-            elif self.shared[node.name].type == "STRING":
-                pass
+            elif self.names[node.name].type == "STRING":
+                raise NotImplementedError()
             else:
                 raise NotImplementedError()
 
@@ -729,12 +715,15 @@ class Compiler:
             return code
 
         elif node.node == "SUBSCRIPTION":
+            names = node.ns.get_names() if "ns" in node else self.names
             if node.left.node == "IDENT":
-                cvar = self.names[node.left.value]
+                var_def = names[node.left.value]
 
-                if cvar.type == "STRING":
-                    if cvar.size == 1:
-                        code = [ "    // STRING %s" % node.node ]
+                if var_def.type == "STRING":
+                    if var_def.size == 1:
+                        node.left.ns = node.ns
+
+                        code = ["    // STRING %s" % node.node]
                         code += self.compile_expr(node.left)
                         code += self.compile_expr(node.right)
                         code += [
@@ -742,9 +731,11 @@ class Compiler:
                             "    jsr LIB_STRING_SUBSCRIPTION",
                         ]
                         return code
+
                     else:
                         # STRING ARRAY INDEX IS ALWAYS WORD
-                        code = [ "    // STRING[] %s" % node.node ]
+                        name = "%s.%s" % (node.ns.name, var_def.name) if "ns" in node else var_def.name
+                        code = ["    // STRING[] %s" % node.node]
                         code += self.compile_expr(node.right)
                         code += [
                             "    pla",
@@ -754,42 +745,44 @@ class Compiler:
 
                             "    lda #0     // capacity as 16 bit number",
                             "    sta ZP_W1+1",
-                            "    lda #%d" % cvar.capacity,
+                            "    lda #%d" % var_def.capacity,
                             "    sta ZP_W1",
                             "    inc ZP_W1  // one byte for size",
                             "    jsr LIB_MUL16",
                             "    clc",
-                            "    lda #<%s" % cvar.name,
+                            "    lda #<%s" % name,
                             "    adc ZP_DW",
                             "    sta ZP_W0",
-                            "    lda #>%s" % cvar.name,
+                            "    lda #>%s" % name,
                             "    adc ZP_DW+1",
                             "    sta ZP_W0+1",
                             "    jsr LIB_STRING_PUSH",
                         ]
                         return code
 
-                if cvar.type == "BYTE" and cvar.index_type == "BYTE":
+                if var_def.type == "BYTE" and var_def.index_type == "BYTE":
+                    name = "%s.%s" % (node.ns.name, var_def.name) if "ns" in node else var_def.name
                     return (
                         self.compile_expr(node.right) +
                         [
                             "    pla",
                             "    tay",
-                            "    lda %s,y" % cvar.name,
+                            "    lda %s,y" % name,
                             "    pha"
                         ]
                     )
-                if cvar.type == "BYTE" and cvar.index_type == "WORD":
+                if var_def.type == "BYTE" and var_def.index_type == "WORD":
+                    name = "%s.%s" % (node.ns.name, var_def.name) if "ns" in node else var_def.name
                     return (
                         self.compile_expr(node.right) +
                         [
                             "    pla",
                             "    clc",
-                            "    adc #<%s_lo" % cvar.name,
+                            "    adc #<%s_lo" % name,
                             "    sta ZP_W0",
 
                             "    pla",
-                            "    adc #>%s_lo" % cvar.name,
+                            "    adc #>%s_lo" % name,
                             "    sta ZP_W0+1",
 
                             "    ldy #0",
@@ -797,50 +790,52 @@ class Compiler:
                             "    pha",
                         ]
                     )
-                if cvar.type == "WORD" and cvar.index_type == "BYTE":
+                if var_def.type == "WORD" and var_def.index_type == "BYTE":
+                    name = "%s.%s" % (node.ns.name, var_def.name) if "ns" in node else var_def.name
                     return (
                         self.compile_expr(node.right) +
                         [
                             "    pla",
                             "    tay",
 
-                            "    lda %s_hi,y" % cvar.name,
+                            "    lda %s_hi,y" % name,
                             "    pha",
 
-                            "    lda %s_lo,y" % cvar.name,
+                            "    lda %s_lo,y" % name,
                             "    pha",
                         ]
                     )
-                if cvar.type == "WORD" and cvar.index_type == "WORD":
+                if var_def.type == "WORD" and var_def.index_type == "WORD":
+                    name = "%s.%s" % (node.ns.name, var_def.name) if "ns" in node else var_def.name
                     return (
                         self.compile_expr(node.right) +
                         [
                             "    pla",
                             "    clc",
-                            "    adc #<%s_lo" % cvar.name,
+                            "    adc #<%s_lo" % name,
                             "    sta ZP_W0",
 
                             "    pla",
-                            "    adc #>%s_lo" % cvar.name,
+                            "    adc #>%s_lo" % name,
                             "    sta ZP_W0+1",
 
                             "    ldy #0",
                             "    lda (ZP_W0),y",
                             "    tax",
 
-                            "    lda #%d" % ((cvar.size >> 8) & 0xff),
+                            "    lda #%d" % ((var_def.size >> 8) & 0xff),
                             "    clc",
                             "    adc ZP_W0+1",
                             "    sta ZP_W0+1",
-                            "    ldy #%d" % (cvar.size & 0xff),
+                            "    ldy #%d" % (var_def.size & 0xff),
                             "    lda (ZP_W0),y",
                             "    pha",
                             "    txa",
                             "    pha",
                         ]
                     )
-            elif node.right.type == "STRING":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+            elif node.left.type == "STRING":
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -859,7 +854,7 @@ class Compiler:
 
         elif node.node == "<":
             if node.left.type == "BYTE":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -952,7 +947,7 @@ class Compiler:
 
         elif node.node == "+":
             if node.type == "BYTE":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -963,12 +958,11 @@ class Compiler:
                     "    clc",
                     "    adc ZP_W0",
                     "    pha",
-                    "}"
                 ]
                 return code
 
             elif node.type == "WORD":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -990,7 +984,7 @@ class Compiler:
                 return code
 
             elif node.type == "STRING":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.right)
                 code += self.compile_expr(node.left)
                 code += [
@@ -1002,7 +996,7 @@ class Compiler:
 
         elif node.node == "-":
             if node.type == "BYTE":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.right)
                 code += [
                     "    pla",
@@ -1021,7 +1015,7 @@ class Compiler:
 
         elif node.node == "*":
             if node.type == "BYTE":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -1039,7 +1033,7 @@ class Compiler:
                 ]
                 return code
             if node.type == "WORD":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -1067,7 +1061,7 @@ class Compiler:
 
         elif node.node == "/":
             if node.type == "BYTE":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += [
                     "    //  ZP_B0 / ZP_B1",
@@ -1090,7 +1084,7 @@ class Compiler:
 
         elif node.node == "%":
             if node.type == "BYTE":
-                code = [ "    // %s %s" % (node.type, node.node) ]
+                code = ["    // %s %s" % (node.type, node.node)]
                 code += self.compile_expr(node.left)
                 code += [
                     "    //  ZP_B0 / ZP_B1",
@@ -1113,7 +1107,7 @@ class Compiler:
 
         elif node.node == "&":
             if node.type == "BYTE":
-                code = [ "{ // BYTE %s" % node.node ]
+                code = ["{ // BYTE %s" % node.node]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1130,7 +1124,7 @@ class Compiler:
 
         elif node.node == "|":
             if node.type == "BYTE":
-                code = [ "{ // BYTE %s" % node.node ]
+                code = ["{ // BYTE %s" % node.node]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [

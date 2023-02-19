@@ -7,10 +7,12 @@ from parse_util import process_variables
 from pathlib import Path
 from compiler import Compiler
 
+
 class Module:
     def __init__(self, filename):
         self.node = "MODULE"
         self.filename = filename
+        self.name = Path(filename).stem
 
         self.shared = AstNode(
             imports=AstNode(),
@@ -77,39 +79,41 @@ class Module:
 
     def compile(self):
         code = [
-            "// MODULE",
-            "%s: {" % Path(self.filename).stem,
+            "%s: {" % self.name,
         ]
 
         compiler = Compiler(self.get_names())
-        code += compiler.compile(self.module.funcs["__MAIN__"])
+        code += compiler.compile_function(self.module.funcs["__MAIN__"])
 
         for func in (f for f in self.module.funcs.values() if f.name != "__MAIN__"):
-            names = self.get_names()
-            names.update(func.vars)
-            names.update(func.data)
-            compiler = Compiler(names)
+            compiler = Compiler(self.get_names())
 
             code += [
+                "",
                 "%s: {" % func.name,
-                compiler.compile(func),
-                "}",
+            ]
+            code += compiler.compile_function(func)
+            code += [
+                "}   // %s" % func.name,
             ]
 
         # COMPILE DATA
-        code += [""]
-        code += ["// DATA"]
-        for data in self.module.data.values():
-            code += Compiler.compile_dataset(data)
+        if self.module.data:
+            code += [""]
+            code += ["    // DATA"]
+            for data in self.module.data.values():
+                code += Compiler.compile_dataset(data)
 
         # COMPILE VARIABLES
-        code += [""]
-        code += ["// VARIABLES"]
-        for var in self.module.vars.values():
-            code += Compiler.compile_variable(var)
+        if self.module.vars:
+            code += [""]
+            code += ["    // VARIABLES"]
+            for var in self.module.vars.values():
+                code += Compiler.compile_variable(var)
 
-        code = [
+        code += [
             "}",
+            "",
         ]
 
         return code
@@ -860,7 +864,6 @@ class Program:
         ]
         code += [".const %s = %s" % (name, value) for name, value in self.shared.consts.items()]
         code += [
-            "// PREAMBLE",
             "*=2048",
             ".byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061",
             "*=2061",
@@ -869,14 +872,13 @@ class Program:
             "    cli",
             "    LOAD($cfff, STACK)",
             "",
-            "    jsr %s.__MAIN__" % Path(self.filename).stem,
+            "    jsr %s.__MAIN__" % self.modules[self.filename].name,
             "",
-            "    // POSTAMBLE",
             "    sei",
             "    inc 1",
             "    cli",
             "    rts",
-            "// END",
+            "    // END OF PROGRAM",
             "",
         ]
 
@@ -884,22 +886,25 @@ class Program:
             code += module.compile()
 
         # COMPILE LITERALS
-        code += ["// LITERALS"]
-        code += [".encoding \"petscii_upper\""]
+        if self.shared.literals:
+            code += ["// LITERALS"]
+            code += [".encoding \"petscii_upper\""]
 
-        for node in self.shared.literals.values():
-            code += self.compile_literal(node)
+            for node in self.shared.literals.values():
+                code += self.compile_literal(node)
 
         # COMPILE DATA
-        code += ["// SHARED DATA"]
-        for data in self.shared.data.values():
-            code += Compiler.compile_dataset(data)
+        if self.shared.data:
+            code += ["// SHARED DATA"]
+            for data in self.shared.data.values():
+                code += Compiler.compile_dataset(data)
 
         # COMPILE VARIABLES
-        code += [""]
-        code += ["// SHARED VARIABLES"]
-        for var in self.shared.vars.values():
-            code += Compiler.compile_variable(var)
+        if self.shared.vars:
+            code += [""]
+            code += ["// SHARED VARIABLES"]
+            for var in self.shared.vars.values():
+                code += Compiler.compile_variable(var)
 
         with open("test.asm", "w") as f:
             for line in code:

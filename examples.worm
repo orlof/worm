@@ -2,6 +2,6 @@ import "example2.worm" as example2
 
 byte a = 0
 
-debug example2.ex.a
+debug example2.b
 
 

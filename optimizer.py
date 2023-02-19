@@ -127,7 +127,7 @@ if __name__ == "__main__":
     print(ast.tree())
 
     compiler = Compiler(shared, literals, ast, local, constants, data)
-    code = compiler.compile()
+    code = compiler.compile_function()
 
     optimizer = Optimizer(code)
     code = optimizer.optimize()
