@@ -1,18 +1,10 @@
-
-import hashlib
-from dotwiz import DotWiz
-
-from lexer import Lexer, operators_arithmetic, operators_comparison
 from nodes import *
-from parse_util import *
 
 
-class Parser:
-    def __init__(self, tokens):
-        self.tokens = tokens
-        self.pos = 0
+class OldParser:
+    def __init__(self, scanner):
+        self.scanner = scanner
 
-        #self.constants = AstDict()
         self.literals = AstDict()
 
         self.shared = AstDict()
@@ -91,10 +83,10 @@ class Parser:
         # for node in self.constants.values():
         #     node.optimize_constants(self.constants)
 
-        self.shared.optimize_constants()
-        self.local.optimize_constants()
-        self.ast.optimize_constants()
-        self.data.optimize_constants()
+        self.shared.fold_constants()
+        self.local.fold_constants()
+        self.ast.fold_constants()
+        self.data.fold_constants()
 
         # INITIALIZE VARIABLES
         assert len(self.scope) == 1

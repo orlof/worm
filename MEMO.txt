@@ -1,3 +1,56 @@
+
+
+module
+    literals
+    imports
+    funcs
+
+    shared
+        consts
+        vars
+        data
+        code   NA
+
+scope
+    consts
+    vars
+    data
+    code
+
+DATA name BYTE 0,1,2
+DATA name BYTE
+    0,1,2
+DATA name
+    BYTE 0,1,2
+    WORD
+        0,1,2
+        3,4,5
+
+DATA BYTE 0,1,2
+DATA
+    BYTE 0,1,2
+    WORD 0,1,2
+
+
+DATASET
+name = "MySprite" or None
+value = [
+    DATA
+    type = "BYTE", "WORD" or "STRING"
+    capacity = 1 or None
+    value = [
+        1,2,3
+    ]
+]
+
+
+
+
+
+
+
+
+
 DEF_VAR
  name="foo"
  return_type="BYTE"

@@ -18,7 +18,7 @@ reserved_words = {
     "switch", "case",
     "fast", "shared",
     "const", "poke", "peek",
-    "debug", "data", "inline", "goto", "origin"
+    "debug", "data", "goto", "origin", "import", "as"
 }
 
 operators_arithmetic = [
@@ -96,46 +96,53 @@ def cmp_const(left, right):
         return 1
     return 0
 
-class Lexer:
+
+class Scanner:
     def __init__(self):
-        self.depth = []
-
-    def scan_text(self, text):
-        text = self.preprocess(text)
-
-        constants=AstList()
-        for v in text:
-            if type(v) == tuple:
-                token, value = v
-                if token == "CONST":
-                    name, value = value
-                    node = AstNode(name=name, value=value, idents=[n[1] for n in Lexer().scan_text(value)[0] if n[0] == "IDENT"])
-                    constants.append(node)
-
-        constants.sort(key=functools.cmp_to_key(cmp_const))
-
-        text = [v for v in text if v[0] != "CONST"]
-
-        const = {c.name: c.value for c in constants}
-        results = []
-        next_version = text
-        for round in range(5):
-            version = list(self.next(next_version))
-            next_version = []
-            for token, value in version:
-                if token == "IDENT" and value in const:
-                    next_version.append(const[value])
-                else:
-                    next_version.append((token, value))
-            if version == next_version:
-                return next_version, constants
-        raise SyntaxError()
+        self.tokens = None
+        self.pos = 0
+        self._mark = None
 
     def scan_file(self, filename):
         with open(filename, "r") as f:
             text = f.read()
 
-        return self.scan_text(text)
+        self.tokens = Lexer().tokenize(text)
+        return self.tokens
+
+    @property
+    def token(self):
+        return self.tokens[self.pos][0]
+
+    @property
+    def next_token(self):
+        return self.tokens[self.pos + 1][0]
+
+    @property
+    def value(self):
+        return self.tokens[self.pos][1]
+
+    def reset(self):
+        self.pos = 0
+
+    def mark(self):
+        self._mark = self.pos
+
+    def restore(self):
+        self.pos = self._mark
+        self._mark = None
+
+    def advance(self):
+        self.pos += 1
+
+
+class Lexer:
+    def __init__(self):
+        self.depth = []
+
+    def tokenize(self, text):
+        text = self.preprocess(text)
+        return list(self.next(text))
 
     def preprocess(self, text):
         text = text.split("\n")
@@ -188,6 +195,7 @@ class Lexer:
                     if is_closing(buf):
                         if not self.depth:
                             raise SyntaxError("Mismatch () [] or {}")
+                        self.depth.pop()
                     yield ("".join(buf), None)
                     buf = [c] if c else []
 

@@ -1,8 +1,4 @@
-from dotwiz import DotWiz
 
-from lexer import Lexer, operators_arithmetic, operators_comparison
-from nodes import *
-from parser import Parser, AstNode, AstList
 
 def format_data(name, data):
     if type(data) == int:
@@ -13,19 +9,10 @@ def format_data(name, data):
         rows.append("    .byte %s" % ", ".join(data[index:index+16]))
     return rows
 
+
 class Compiler:
-    def __init__(self, shared, literals, ast, local, constants, data):
-        self.shared = shared
-        self.literals = literals
-        self.local = local
-        self.ast = ast
-        self.constants = constants
-        self.data = data
-
-        self.func_name = None
-        self.names = {}
-        self.code = []
-
+    def __init__(self, names):
+        self.names = names
         self.library = {}
         self.macro = {}
 
@@ -55,19 +42,20 @@ class Compiler:
                     if token[1].startswith("LIB_"):
                         self.include_library(token[1])
 
-    def compile_dataset(self, dataset):
+    @classmethod
+    def compile_dataset(cls, dataset):
         code = []
         if "name" in dataset:
             code += [
                 "%s:" % dataset.name.value
             ]
         for data in dataset.value:
-            if data.return_type == "BYTE":
+            if data.type == "BYTE":
                 byte = []
                 for e in data.value:
-                    if e.type in ("NUMERIC", "IDENT"):
+                    if e.node in ("NUMERIC", "IDENT"):
                         byte.append(str(e.value))
-                    elif e.type == "LITERAL":
+                    elif e.node == "LITERAL":
                         if byte:
                             code += [
                                 "    .byte %s" % ", ".join(byte)
@@ -80,10 +68,10 @@ class Compiler:
                     code += [
                         "    .byte %s" % ", ".join(byte)
                     ]
-            elif data.return_type == "WORD":
+            elif data.type == "WORD":
                 word = []
                 for e in data.value:
-                    if e.type in ("NUMERIC", "IDENT"):
+                    if e.node in ("NUMERIC", "IDENT"):
                         word.append(str(e.value))
                 if word:
                     code += [
@@ -91,7 +79,32 @@ class Compiler:
                     ]
         return code
 
-    def compile(self):
+    def compile(self, func):
+        self.func_name = func.name
+        self.names.update(func.vars)
+        self.names.update(func.data)
+
+        code = []
+        code += ["// %s" % func.name]
+        for node in func.code:
+            asm = self.compile_code(node)
+            code += asm
+
+        # COMPILE DATA
+        code += [""]
+        code += ["// DATA"]
+        for data in func.data:
+            code += self.compile_dataset(data)
+
+        # COMPILE VARIABLES
+        code += [""]
+        code += ["// VARIABLES"]
+        for var in func.vars.values():
+            code += self.compile_variable(var)
+
+        return code
+
+    def compile2(self):
         # COMPILE MAIN
         self.names = self.shared.copy()
         self.names.update(self.local)
@@ -170,14 +183,15 @@ class Compiler:
         return code
 
     def compile_code(self, node):
-        if node.type == "LIST":
+        if node.node == "LIST":
+            assert False
             nodes = []
             for n in node:
                 nodes += self.compile_code(n)
             return nodes
 
-        elif node.type == "CBYTE":
-            if node.value.return_type == "WORD":
+        elif node.node == "CBYTE":
+            if node.value.type == "WORD":
                 return (
                     self.compile_expr(node.value) +
                     [
@@ -191,8 +205,8 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "CWORD":
-            if node.value.return_type == "BYTE":
+        elif node.node == "CWORD":
+            if node.value.type == "BYTE":
                 return (
                     self.compile_expr(node.value) +
                     [
@@ -207,29 +221,29 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "ASM":
+        elif node.node == "ASM":
             code = ["{"] + node.value + ["}"]
             return code
 
-        elif node.type == "LABEL":
+        elif node.node == "LABEL":
             code = [
                 "%s:" % node.name,
             ]
             return code
 
-        elif node.type == "GOTO":
+        elif node.node == "GOTO":
             code = [
                 "    jmp %s" % node.value,
             ]
             return code
 
-        elif node.type == "ORIGIN":
+        elif node.node == "ORIGIN":
             code = [
                 "*=%d" % node.value,
             ]
             return code
 
-        elif node.type == "CALL":
+        elif node.node == "CALL":
             def_args = self.shared[node.name].args
             if len(def_args) != len(node.args):
                 raise SyntaxError("%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args)))
@@ -237,19 +251,19 @@ class Compiler:
             code = []
             for call_arg, def_arg in zip(node.args, def_args):
                 code += self.compile_expr(call_arg)
-                if call_arg.return_type == "BYTE":
+                if call_arg.type == "BYTE":
                     code += [
                         "    pla",
                         "    sta %s.%s" % (node.name, def_arg.name),
                     ]
-                elif call_arg.return_type == "WORD":
+                elif call_arg.type == "WORD":
                     code += [
                         "    pla",
                         "    sta %s.%s" % (node.name, def_arg.name),
                         "    pla",
                         "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
-                elif call_arg.return_type == "STRING":
+                elif call_arg.type == "STRING":
                     code += [
                         "    lda #%d" % def_arg.capacity,
                         "    STR_PULL_TO(%s.%s)" % (node.name, def_arg.name),
@@ -260,22 +274,22 @@ class Compiler:
             code += [
                 "    jsr %s" % node.name
             ]
-            if self.shared[node.name].return_type == "STRING":
+            if self.shared[node.name].type == "STRING":
                 code += [
                     "    jsr LIB_STRING_POP",
                 ]
 
             return code
 
-        elif node.type == "RETURN":
+        elif node.node == "RETURN":
             code = self.compile_expr(node.value)
-            if self.names[self.func_name].return_type == "BYTE":
+            if self.names[self.func_name].type == "BYTE":
                 code += [
                     "    pla",
                     "    sta %s" % self.func_name,
                     "    rts",
                 ]
-            elif self.names[self.func_name].return_type == "WORD":
+            elif self.names[self.func_name].type == "WORD":
                 code += [
                     "pla",
                     "sta %s" % self.func_name,
@@ -285,7 +299,7 @@ class Compiler:
                 ]
             return code
 
-        elif node.type == "POKE":
+        elif node.node == "POKE":
             return (
                 self.compile_expr(node.value) +
                 self.compile_expr(node.addr) +
@@ -301,7 +315,7 @@ class Compiler:
                 ]
             )
 
-        elif node.type == "DEBUG":
+        elif node.node == "DEBUG":
             return (
                 self.compile_expr(node.value) +
                 [
@@ -309,14 +323,14 @@ class Compiler:
                 ]
             )
 
-        elif node.type == "PASS":
+        elif node.node == "PASS":
             return []
 
-        elif node.type == "DATASET":
+        elif node.node == "DATASET":
             return self.compile_dataset(node)
 
-        elif node.type == "PEEK":
-            code = [ "// BYTE %s" % node.type ]
+        elif node.node == "PEEK":
+            code = [ "// BYTE %s" % node.node ]
             code += self.compile_expr(node.addr)
             code += [
                 "    // BYTE PEEK",
@@ -329,56 +343,24 @@ class Compiler:
                 "    pha",
             ]
 
-        elif node.type == "START":
-            code = [
-                    "// CONSTANTS",
-                    ".const ZP_DW = $02",
-                    ".const ZP_W0 = $06",
-                    ".const ZP_W1 = $08",
-                    ".const ZP_B0 = $10",
-                    ".const ZP_B1 = $11",
-                    ".const STACK = $12",
-                    ".const KERNEL_CHROUT = $ffd2",
-                    "",
-                ]
-            code += [".const %s = %s" % (c.name, c.value) for c in self.constants]
-            code += [
-                    "// PREAMBLE",
-                    "*=2048",
-                    ".byte 0,11,8,10,0,158,50,48,54,49,0,0,0 // SYS 2061",
-                    "*=2061",
-                    "    sei",
-                    "    dec 1",
-                    "    cli",
-                    "    LOAD($cfff, STACK)",
-                    "",
-                    "    // PROGRAM CODE",
-                    "",
-                ]
-            return code
+        elif node.node == "START":
+            return [
+                "// START OF MODULE"
+            ]
 
-        elif node.type == "END":
-            return (
-                [
-                    "",
-                    "    // POSTAMBLE",
-                    "    sei",
-                    "    inc 1",
-                    "    cli",
-                    "    rts",
-                    "// END",
-                    "",
-                ]
-            )
+        elif node.node == "END":
+            return [
+                "// END OF MODULE"
+            ]
 
-        elif node.type == "WHILE":
+        elif node.node == "WHILE":
             code = []
             code += [
                 "{ // WHILE",
                 "expr:",
             ]
 
-            if node.expr.type == "NUMERIC" and node.expr.value == 1:
+            if node.expr.node == "NUMERIC" and node.expr.value == 1:
                 code += [ "suite:" ]
             else:
                 code += self.compile_expr(node.expr)
@@ -399,7 +381,7 @@ class Compiler:
 
             return code
 
-        elif node.type == "IF":
+        elif node.node == "IF":
             code = []
             code += [
                 "{ // IF",
@@ -446,22 +428,22 @@ class Compiler:
 
             return code
 
-        elif node.type == "=":
+        elif node.node == "=":
             # a,b = 1,2 (calculate right side)
             nodes = []
             for rnode in node.right:
                 nodes += self.compile_expr(rnode)
 
             for lnode in node.left[::-1]:
-                if lnode.type == "IDENT":
+                if lnode.node == "IDENT":
                     cvar = self.names[lnode.value]
-                    if cvar.return_type == "BYTE":
+                    if cvar.type == "BYTE":
                         nodes += [
                             "    // assign to byte ident",
                             "    pla",
                             "    sta %s" % cvar.name,
                         ]
-                    elif cvar.return_type == "WORD":
+                    elif cvar.type == "WORD":
                         nodes += [
                             "    // assign to word ident",
                             "    pla",
@@ -469,7 +451,7 @@ class Compiler:
                             "    pla",
                             "    sta %s+1" % cvar.name,
                         ]
-                    elif cvar.return_type == "STRING":
+                    elif cvar.type == "STRING":
                         nodes += [
                             "    // assign string",
                             "    lda #%d" % cvar.capacity,
@@ -478,9 +460,9 @@ class Compiler:
                     else:
                         raise NotImplementedError()
 
-                elif lnode.type == "SUBSCRIPTION":
+                elif lnode.node == "SUBSCRIPTION":
                     cvar = self.names[lnode.left.value]
-                    if cvar.return_type == "BYTE" and cvar.index_type == "BYTE":
+                    if cvar.type == "BYTE" and cvar.index_type == "BYTE":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // byte[byte]=byte",
@@ -489,7 +471,7 @@ class Compiler:
                             "    pla",
                             "    sta %s,x" % cvar.name,
                         ]
-                    elif cvar.return_type == "BYTE" and cvar.index_type == "WORD":
+                    elif cvar.type == "BYTE" and cvar.index_type == "WORD":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // byte[word]=byte",
@@ -506,7 +488,7 @@ class Compiler:
                             "    ldy #0",
                             "    sta (ZP_W0),y"
                         ]
-                    elif cvar.return_type == "WORD" and cvar.index_type == "BYTE":
+                    elif cvar.type == "WORD" and cvar.index_type == "BYTE":
                         nodes += self.compile_expr(lnode.right)
                         nodes += [
                             "    // word[byte]=word",
@@ -546,7 +528,7 @@ class Compiler:
             return nodes
 
     def compile_literal(self, node):
-        assert node.type == "LITERAL"
+        assert node.node == "LITERAL"
 
         return (
             ["%s:" % node.md5]+
@@ -554,20 +536,21 @@ class Compiler:
             ["    .text \"%s\"" % node.value]
         )
 
-    def compile_variable(self, node):
-        assert node.type == "DEF_VAR"
+    @classmethod
+    def compile_variable(cls, node):
+        assert node.node == "VARIABLE"
 
-        if node.return_type == "BYTE":
+        if node.type == "BYTE":
             # byte a
             return list(format_data(node.name, node.initializer))
-        elif node.return_type == "WORD":
+        elif node.type == "WORD":
             # word a
             return (
                 ["%s:" % node.name] +
                 format_data("%s_lo" % node.name, map(lambda x: (x & 0xff), node.initializer)) +
                 format_data("%s_hi" % node.name, map(lambda x: (x >> 8) & 0xff, node.initializer))
             )
-        elif node.return_type == "STRING":
+        elif node.type == "STRING":
             result = ["%s:" % node.name]
             for element in node.initializer:
                 result += ["    .byte %d" % element[0]]
@@ -577,13 +560,13 @@ class Compiler:
             raise NotImplementedError()
 
     def compile_expr(self, node):
-        if node.type == "NUMERIC":
-            if node.return_type == "BYTE":
+        if node.node == "NUMERIC":
+            if node.type == "BYTE":
                 return [
                     "    lda #%d" % (node.value & 0xff),
                     "    pha",
                 ]
-            elif node.return_type == "WORD":
+            elif node.type == "WORD":
                 # 256
                 return [
                     "    // word literal %d to stack" % node.value,
@@ -595,22 +578,22 @@ class Compiler:
             else:
                 raise SyntaxError("Invalid type: %s" + out_type)
 
-        elif node.type == "LITERAL":
+        elif node.node == "LITERAL":
             return [
                 "    STR_PUSH_FROM(%s)" % node.md5,
             ]
 
-        elif node.type == "IDENT":
+        elif node.node == "IDENT":
             ident = self.names[node.value]
 
-            if ident.return_type == "BYTE":
+            if ident.type == "BYTE":
                 # color
                 return [
                     "    // push byte value of %s to stack" % ident.name,
                     "    lda %s" % ident.name,
                     "    pha",
                 ]
-            elif ident.return_type == "WORD":
+            elif ident.type == "WORD":
                 return [
                     "    // cword to stack",
                     "    lda %s+1" % ident.name,
@@ -618,7 +601,7 @@ class Compiler:
                     "    lda %s" % ident.name,
                     "    pha",
                 ]
-            elif ident.return_type == "STRING":
+            elif ident.type == "STRING":
                 if ident.size == 1:
                     return [
                         "    STR_PUSH_FROM(%s)" % ident.name,
@@ -628,8 +611,8 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "CSTRING":
-            if node.value.return_type == "BYTE":
+        elif node.node == "CSTRING":
+            if node.value.type == "BYTE":
                 return (
                     self.compile_expr(node.value) +
                     [
@@ -642,7 +625,7 @@ class Compiler:
                         "    jsr LIB_CSTRING_WORD",
                     ]
                 )
-            if node.value.return_type == "WORD":
+            if node.value.type == "WORD":
                 return (
                     self.compile_expr(node.value) +
                     [
@@ -658,8 +641,8 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "CWORD":
-            if node.value.return_type == "BYTE":
+        elif node.node == "CWORD":
+            if node.value.type == "BYTE":
                 return (
                     self.compile_expr(node.value) +
                     [
@@ -674,7 +657,7 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "CALL":
+        elif node.node == "CALL":
             def_args = self.shared[node.name].args
             if len(def_args) != len(node.args):
                 raise SyntaxError("%s expects %d arguments, got %d" % (node.name, len(def_args), len(node.args)))
@@ -682,19 +665,19 @@ class Compiler:
             code = []
             for call_arg, def_arg in zip(node.args, def_args):
                 code += self.compile_expr(call_arg)
-                if call_arg.return_type == "BYTE":
+                if call_arg.type == "BYTE":
                     code += [
                         "    pla",
                         "    sta %s.%s" % (node.name, def_arg.name),
                     ]
-                elif call_arg.return_type == "WORD":
+                elif call_arg.type == "WORD":
                     code += [
                         "    pla",
                         "    sta %s.%s" % (node.name, def_arg.name),
                         "    pla",
                         "    sta %s.%s+1" % (node.name, def_arg.name),
                     ]
-                elif call_arg.return_type == "STRING":
+                elif call_arg.type == "STRING":
                     code += [
                         "    lda #%d" % def_arg.capacity,
                         "    STR_PULL_TO(%s.%s)" % (node.name, def_arg.name),
@@ -705,36 +688,36 @@ class Compiler:
             code += [
                 "    jsr %s" % node.name
             ]
-            if node.return_type == "BYTE":
+            if node.type == "BYTE":
                 code += [
                     "    lda %s.%s" %(node.name, node.name),
                     "    pha",
                 ]
-            elif self.shared[node.name].return_type == "WORD":
+            elif self.shared[node.name].type == "WORD":
                 code += [
                     "    lda %s.%s+1" %(node.name, node.name),
                     "    pha",
                     "    lda %s.%s" %(node.name, node.name),
                     "    pha",
                 ]
-            elif self.shared[node.name].return_type == "STRING":
+            elif self.shared[node.name].type == "STRING":
                 pass
             else:
                 raise NotImplementedError()
 
-            # if node.return_type == "BYTE":
+            # if node.type == "BYTE":
             #     code += [
             #         "    lda %s._RETURN_" % node.name,
             #         "    pha"
             #     ]
-            # elif node.return_type == "WORD":
+            # elif node.type == "WORD":
             #     code += [
             #         "    lda %s._RETURN_+1" % node.name,
             #         "    pha"
             #         "    lda %s._RETURN_" % node.name,
             #         "    pha"
             #     ]
-            # elif node.return_type == "STRING":
+            # elif node.type == "STRING":
             #     self.library["LIB_STRING_PUSH"] = LIBRARY["LIB_STRING_PUSH"]
             #     code += [
             #         "    LOAD(%s._RETURN_, ZP_W0)" % node.name,
@@ -745,13 +728,13 @@ class Compiler:
 
             return code
 
-        elif node.type == "SUBSCRIPTION":
-            if node.left.type == "IDENT":
+        elif node.node == "SUBSCRIPTION":
+            if node.left.node == "IDENT":
                 cvar = self.names[node.left.value]
 
-                if cvar.return_type == "STRING":
+                if cvar.type == "STRING":
                     if cvar.size == 1:
-                        code = [ "    // STRING %s" % node.type ]
+                        code = [ "    // STRING %s" % node.node ]
                         code += self.compile_expr(node.left)
                         code += self.compile_expr(node.right)
                         code += [
@@ -761,7 +744,7 @@ class Compiler:
                         return code
                     else:
                         # STRING ARRAY INDEX IS ALWAYS WORD
-                        code = [ "    // STRING[] %s" % node.type ]
+                        code = [ "    // STRING[] %s" % node.node ]
                         code += self.compile_expr(node.right)
                         code += [
                             "    pla",
@@ -786,7 +769,7 @@ class Compiler:
                         ]
                         return code
 
-                if cvar.return_type == "BYTE" and cvar.index_type == "BYTE":
+                if cvar.type == "BYTE" and cvar.index_type == "BYTE":
                     return (
                         self.compile_expr(node.right) +
                         [
@@ -796,7 +779,7 @@ class Compiler:
                             "    pha"
                         ]
                     )
-                if cvar.return_type == "BYTE" and cvar.index_type == "WORD":
+                if cvar.type == "BYTE" and cvar.index_type == "WORD":
                     return (
                         self.compile_expr(node.right) +
                         [
@@ -814,7 +797,7 @@ class Compiler:
                             "    pha",
                         ]
                     )
-                if cvar.return_type == "WORD" and cvar.index_type == "BYTE":
+                if cvar.type == "WORD" and cvar.index_type == "BYTE":
                     return (
                         self.compile_expr(node.right) +
                         [
@@ -828,7 +811,7 @@ class Compiler:
                             "    pha",
                         ]
                     )
-                if cvar.return_type == "WORD" and cvar.index_type == "WORD":
+                if cvar.type == "WORD" and cvar.index_type == "WORD":
                     return (
                         self.compile_expr(node.right) +
                         [
@@ -856,8 +839,8 @@ class Compiler:
                             "    pha",
                         ]
                     )
-            elif node.right.return_type == "STRING":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+            elif node.right.type == "STRING":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -868,15 +851,15 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "AND_LIST":
+        elif node.node == "AND_LIST":
             if len(node.value) == 1:
                 return self.compile_expr(node.value[0])
             else:
                 raise NotImplemented()
 
-        elif node.type == "<":
-            if node.left.return_type == "BYTE":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "<":
+            if node.left.type == "BYTE":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -896,9 +879,9 @@ class Compiler:
             else:
                 raise NotImplemented()
 
-        elif node.type == "AND":
-            if node.return_type == "BYTE":
-                code = [ "{   // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "AND":
+            if node.type == "BYTE":
+                code = [ "{   // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -922,9 +905,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "OR":
-            if node.return_type == "BYTE":
-                code = [ "{  // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "OR":
+            if node.type == "BYTE":
+                code = [ "{  // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -948,9 +931,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "NOT":
-            if node.return_type == "BYTE":
-                code = [ "{  // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "NOT":
+            if node.type == "BYTE":
+                code = [ "{  // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.value)
                 code += [
                     "    pla",
@@ -967,9 +950,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "+":
-            if node.return_type == "BYTE":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "+":
+            if node.type == "BYTE":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -984,8 +967,8 @@ class Compiler:
                 ]
                 return code
 
-            elif node.return_type == "WORD":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+            elif node.type == "WORD":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1006,8 +989,8 @@ class Compiler:
                     ]
                 return code
 
-            elif node.return_type == "STRING":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+            elif node.type == "STRING":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.right)
                 code += self.compile_expr(node.left)
                 code += [
@@ -1017,9 +1000,9 @@ class Compiler:
             else:
                 raise NotImplemented()
 
-        elif node.type == "-":
-            if node.return_type == "BYTE":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "-":
+            if node.type == "BYTE":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.right)
                 code += [
                     "    pla",
@@ -1036,9 +1019,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "*":
-            if node.return_type == "BYTE":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "*":
+            if node.type == "BYTE":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -1055,8 +1038,8 @@ class Compiler:
                     "    pha",
                 ]
                 return code
-            if node.return_type == "WORD":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+            if node.type == "WORD":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    pla",
@@ -1082,9 +1065,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "/":
-            if node.return_type == "BYTE":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "/":
+            if node.type == "BYTE":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    //  ZP_B0 / ZP_B1",
@@ -1105,9 +1088,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "%":
-            if node.return_type == "BYTE":
-                code = [ "    // %s %s" % (node.return_type, node.type) ]
+        elif node.node == "%":
+            if node.type == "BYTE":
+                code = [ "    // %s %s" % (node.type, node.node) ]
                 code += self.compile_expr(node.left)
                 code += [
                     "    //  ZP_B0 / ZP_B1",
@@ -1128,9 +1111,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "&":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == "&":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1145,9 +1128,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "|":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == "|":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1162,9 +1145,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "^":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == "^":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1179,9 +1162,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "~":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == "~":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1194,9 +1177,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "<<":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == "<<":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1218,9 +1201,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == ">>":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == ">>":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1241,9 +1224,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == ">>>":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == ">>>":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1265,9 +1248,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == ">><":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == ">><":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [
@@ -1291,9 +1274,9 @@ class Compiler:
             else:
                 raise NotImplementedError()
 
-        elif node.type == "<<>":
-            if node.return_type == "BYTE":
-                code = [ "{ // BYTE %s" % node.type ]
+        elif node.node == "<<>":
+            if node.type == "BYTE":
+                code = [ "{ // BYTE %s" % node.node ]
                 code += self.compile_expr(node.left)
                 code += self.compile_expr(node.right)
                 code += [

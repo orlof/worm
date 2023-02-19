@@ -112,7 +112,7 @@ if __name__ == "__main__":
     tokens, constants = lexer.scan_file("examples.worm")
 
     parser = Parser(tokens)
-    shared, literals, ast, local, data = parser.parse()
+    shared, literals, ast, local, data = parser.import_module()
 
     print("=== SHARED ===")
     print(shared.tree())

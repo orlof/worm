@@ -1,12 +1,7 @@
+import "example2.worm" as example2
 
-CONST
-    WIN_ACTIVE = 1
-    WIN_NOT_ACTIVE = 12
+byte a = 0
 
-BYTE
-    InventorySelected
-    ShipyardSelected
+debug example2.ex.a
 
-STRING[6] SystemTitle(5) = [
-    "Weapon", "Engine", "Gyro", "Armor", "Cargo"
-]
+
