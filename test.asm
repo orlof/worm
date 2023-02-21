@@ -15,7 +15,7 @@
     cli
     LOAD($cfff, STACK)
 
-    jsr examples.__MAIN__
+    jsr examples
 
     sei
     inc 1
@@ -37,14 +37,16 @@ examples: {
     jsr LIB_DEBUG
     rts
 
-    // VARIABLES
 a:
     .byte $00
-}
+}  // examples
 
 example2: {
 
     rts
+
+b:
+    .byte $00
 
 inc: {
 
@@ -53,28 +55,156 @@ inc: {
     pha
     lda #1
     pha
-    // byte l + r
     pla
     sta ZP_W0
     pla
     clc
     adc ZP_W0
     pha
-}
     pla
     sta inc
     rts
     rts
 
-    // VARIABLES
 b:
     .byte $00
 inc:
     .byte $00
 }   // inc
+}  // example2
 
-    // VARIABLES
-b:
-    .byte $00
+// MACROS
+
+.macro LOAD(Addr, ZP) {
+    lda #<Addr
+    sta ZP
+    lda #>Addr
+    sta ZP+1
+}
+
+
+.macro SUB16_BYTE(wAddr, bAddr) {
+    sec
+    lda wAddr
+    sbc bAddr
+    sta wAddr
+    bcs exit
+    dec wAddr+1
+exit:
+}
+
+
+.macro INC16(Addr) {
+    inc Addr
+    bne !+
+    inc Addr+1
+!:
+}
+
+// LIBRARIES
+
+/*
+---------------------------
+Print 16-bit decimal number
+---------------------------
+On entry, ZP_W0=number to print
+          ZP_B0=0 or pad character (eg '0' or ' ')
+On entry at PrDec16Lp1,
+          Y=(number of digits)*2-2, eg 8 for 5 digits
+On exit,  A,X,Y,ZP_W0,ZP_B0 corrupted
+Size      69 bytes
+-----------------------------------------------------------------
+*/
+LIB_CSTRING_WORD: {
+PrDec16:
+    lda #1                              // String length
+    sta ZP_B1
+    ldy #8                              // Offset to powers of ten
+
+PrDec16Lp1:
+    ldx #$ff
+    sec                                 // Start with digit=-1
+PrDec16Lp2:
+    lda ZP_W0+0
+    sbc PrDec16Tens+0,y
+    sta ZP_W0+0                         // Subtract current tens
+    lda ZP_W0+1
+    sbc PrDec16Tens+1,y
+    sta ZP_W0+1
+    inx
+    bcs PrDec16Lp2                      // Loop until <0
+    lda ZP_W0+0
+    adc PrDec16Tens+0,Y
+    sta ZP_W0+0                         // Add current tens back in
+    lda ZP_W0+1
+    adc PrDec16Tens+1,y
+    sta ZP_W0+1
+    txa
+    bne PrDec16Digit                    // Not zero, print it
+    cpy #0
+    beq PrDec16Digit
+    lda ZP_B0
+    bne PrDec16Print
+    beq PrDec16Next                     // pad<>0, use it
+PrDec16Digit:
+    ldx #$30
+    stx ZP_B0                           // No more zero padding
+    ora #$30                            // Print this digit
+PrDec16Print:
+    inc ZP_B1
+    pha
+PrDec16Next:
+    dey
+    dey
+    bpl PrDec16Lp1                      // Loop for next digit
+
+    SUB16_BYTE(STACK, ZP_B1)
+    ldy ZP_B1
+!:
+    pla
+    sta (STACK),y
+    dey
+    cpy #1
+    bne !-
+
+    ldx ZP_B1
+    dex
+    txa
+    sta (STACK),y
+
+    rts
+
+PrDec16Tens:
+    .word 1
+    .word 10
+    .word 100
+    .word 1000
+    .word 10000
+}
+
+
+LIB_DEBUG: {
+    INC16(STACK)
+    ldy #0
+    lda (STACK),y
+    tax
+!:
+    iny
+    lda (STACK),y
+    jsr KERNEL_CHROUT
+    dex
+    bne !-
+
+    clc
+    tya
+    adc STACK
+    sta STACK
+    bcc !+
+    inc STACK+1
+!:
+    lda #13
+    jsr KERNEL_CHROUT
+
+    rts
 }
 

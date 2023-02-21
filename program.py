@@ -1,5 +1,6 @@
 import hashlib
 
+from includes import Includes
 from lexer import Scanner
 from nodes import *
 from parse_util import process_variables
@@ -13,6 +14,9 @@ class Module:
         self.node = "MODULE"
         self.filename = filename
         self.name = Path(filename).stem
+
+        self.library = AstNode()
+        self.macro = AstNode()
 
         self.shared = AstNode(
             imports=AstNode(),
@@ -82,9 +86,27 @@ class Module:
             "%s: {" % self.name,
         ]
 
+        # COMPILE MAIN
         compiler = Compiler(self.get_names())
         code += compiler.compile_function(self.module.funcs["__MAIN__"])
+        self.macro.update(compiler.macro)
+        self.library.update(compiler.library)
 
+        # COMPILE VARIABLES
+        if self.module.vars:
+            code += [""]
+            # code += ["    // VARIABLES"]
+            for var in self.module.vars.values():
+                code += Compiler.compile_variable(var)
+
+        # COMPILE DATA
+        if self.module.data:
+            code += [""]
+            # code += ["    // DATA"]
+            for data in self.module.data.values():
+                code += Compiler.compile_dataset(data)
+
+        # COMPILE FUNCTIONS
         for func in (f for f in self.module.funcs.values() if f.name != "__MAIN__"):
             compiler = Compiler(self.get_names())
 
@@ -97,22 +119,11 @@ class Module:
                 "}   // %s" % func.name,
             ]
 
-        # COMPILE DATA
-        if self.module.data:
-            code += [""]
-            code += ["    // DATA"]
-            for data in self.module.data.values():
-                code += Compiler.compile_dataset(data)
-
-        # COMPILE VARIABLES
-        if self.module.vars:
-            code += [""]
-            code += ["    // VARIABLES"]
-            for var in self.module.vars.values():
-                code += Compiler.compile_variable(var)
+            self.macro.update(compiler.macro)
+            self.library.update(compiler.library)
 
         code += [
-            "}",
+            "}  // %s" % self.name,
             "",
         ]
 
@@ -777,7 +788,7 @@ class Module:
 class Program:
     def __init__(self, filename):
         self.filename = filename
-        #self.main_module = None
+
         self.shared = AstNode()
         self.modules = None
 
@@ -818,6 +829,9 @@ class Program:
         )
 
     def do_it(self):
+        library = AstNode()
+        macro = AstNode()
+
         # import modules
         self.modules = self.import_modules()
         for module in self.modules.values():
@@ -872,7 +886,7 @@ class Program:
             "    cli",
             "    LOAD($cfff, STACK)",
             "",
-            "    jsr %s.__MAIN__" % self.modules[self.filename].name,
+            "    jsr %s" % self.modules[self.filename].name,
             "",
             "    sei",
             "    inc 1",
@@ -884,6 +898,8 @@ class Program:
 
         for module in self.modules.values():
             code += module.compile()
+            macro.update(module.macro)
+            library.update(module.library)
 
         # COMPILE LITERALS
         if self.shared.literals:
@@ -905,6 +921,24 @@ class Program:
             code += ["// SHARED VARIABLES"]
             for var in self.shared.vars.values():
                 code += Compiler.compile_variable(var)
+
+        # ADD MACROS AND LIBRARIES
+        includes = Includes()
+        includes.include_macros(code)
+        includes.include_libraries(code)
+
+        if includes.macros:
+            code += ["// MACROS"]
+            for macro in includes.macros.values():
+                code += macro
+
+        if includes.libraries:
+            code += ["// LIBRARIES"]
+            for lib in includes.libraries.values():
+                code += lib
+
+
+
 
         with open("test.asm", "w") as f:
             for line in code:
