@@ -271,19 +271,21 @@ class Module:
                     args=self.func_arg_list(),
                     const=AstNode(), data=AstNode()
                 )
-                self.scopes.append(func)
-
                 assert self.token == ")"
                 self.advance()
 
                 # ADD ARGS TO LOCALS
                 func.vars = AstNode({node.name: node for node in func.args})
-                func.vars[name] = AstNode(
-                    node="FUNCTION_ARGUMENT", name=name, type=var_type, capacity=capacity, size=1,
-                )
+                if func.type != "STRING":
+                    func.vars[name] = AstNode(
+                        node="FUNCTION_ARGUMENT", name=name, type=var_type, capacity=capacity, size=1,
+                    )
 
+                self.scopes.append(func)
                 func.code = self.suite()
-                self.module.funcs[func.name] = self.scopes.pop()
+                self.scopes.pop()
+
+                self.module.funcs[func.name] = func
                 return None
 
             else:
@@ -524,7 +526,11 @@ class Module:
         # a=1
         left = self.expr()
 
-        if self.token == "=":
+        if self.token == "AT":
+            self.advance()
+            left.addr = self.expr()
+
+        elif self.token == "=":
             self.advance()
 
             right = self.expr()
@@ -820,7 +826,7 @@ class Program:
         return shared
 
     def compile_literal(self, node):
-        assert node.type == "LITERAL"
+        assert node.node == "LITERAL"
 
         return (
             ["%s:" % node.md5]+

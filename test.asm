@@ -25,7 +25,11 @@
 
 examples: {
 
-    lda example2.b
+    lda #0
+    pha
+    pla
+    tay
+    lda x,y
     pha
     lda #0
     sta ZP_W0+1
@@ -37,41 +41,10 @@ examples: {
     jsr LIB_DEBUG
     rts
 
-a:
-    .byte $00
+
+_x:
+    .byte 0, 1
 }  // examples
-
-example2: {
-
-    rts
-
-b:
-    .byte $00
-
-inc: {
-
-    // BYTE +
-    lda b
-    pha
-    lda #1
-    pha
-    pla
-    sta ZP_W0
-    pla
-    clc
-    adc ZP_W0
-    pha
-    pla
-    sta inc
-    rts
-    rts
-
-b:
-    .byte $00
-inc:
-    .byte $00
-}   // inc
-}  // example2
 
 // MACROS
 

@@ -21,7 +21,7 @@ class Compiler:
         code = []
         if "name" in dataset:
             code += [
-                "%s:" % dataset.name.value
+                "%s:" % dataset.name
             ]
         for data in dataset.value:
             if data.type == "BYTE":
@@ -65,6 +65,14 @@ class Compiler:
             asm = self.compile_code(node)
             code += asm
 
+        if func.code[-1].node != "RETURN" and func.type == "STRING":
+            code += [
+                "    ldy #0",
+                "    lda #0",
+                "    sta (STACK),y",
+                "    DEC16(STACK)",
+            ]
+
         code += ["    rts"]
 
         # COMPILE VARIABLES
@@ -83,67 +91,9 @@ class Compiler:
 
         return code
 
-    def compile2(self):
-        # COMPILE MAIN
-        self.names = self.shared.copy()
-        self.names.update(self.local)
-        self.func_name = "main"
-        for node in self.ast:
-            a=self.compile_code(node)
-            self.code += a
-
-        # COMPILE FUNCTIONS
-        for name, node in self.shared.items():
-            if node.type == "DEF_FUN":
-                self.func_name = node.name
-                self.names = self.shared.copy()
-                self.names.update(node.local)
-                self.code += self.compile_function(node)
-
-        # ADD MACROS AND LIBRARIES
-        self.include_macros(self.code)
-        self.include_libraries(self.code)
-
-        if self.macro:
-            self.code += ["// MACROS"]
-            for macro in self.macro.values():
-                self.code += macro
-
-        if self.library:
-            self.code += ["// LIBRARIES"]
-            for lib in self.library.values():
-                self.code += lib
-
-        # COMPILE LITERALS
-        self.code += ["// LITERALS"]
-        self.code += [".encoding \"petscii_upper\""]
-
-        for node in self.literals.values():
-            self.code += self.compile_literal(node)
-
-        # COMPILE DATA
-        self.code += ["// DATA"]
-        for data in self.data:
-            self.code += self.compile_dataset(data)
-
-        # COMPILE VARIABLES
-        self.code += [""]
-        self.code += ["// SHARED"]
-        for name, node in self.shared.items():
-            if node.type == "DEF_VAR":
-                self.code += self.compile_variable(node)
-
-        self.code += [""]
-        self.code += ["// MAIN LOCALS"]
-        for name, node in self.local.items():
-            self.code += self.compile_variable(node)
-
-        return self.code
-
     def compile_code(self, node):
         if node.node == "LIST":
-            assert False
-            nodes = []
+            nodes = AstList()
             for n in node:
                 nodes += self.compile_code(n)
             return nodes
@@ -178,7 +128,7 @@ class Compiler:
             ]
             return code
 
-        elif node.node == "CALL":
+        elif node.node in ("CALL", "SUB"):
             left_names = node.ns.get_names() if "ns" in node else self.names
             def_args = left_names[node.name].args
             if len(def_args) != len(node.args):
@@ -216,7 +166,7 @@ class Compiler:
                     "    jsr %s" % node.name
                 ]
 
-            if self.names[node.name].type == "STRING":
+            if left_names[node.name].type == "STRING":
                 code += [
                     "    jsr LIB_STRING_POP",
                 ]
@@ -370,7 +320,7 @@ class Compiler:
                 names = lnode.ns.get_names() if "ns" in lnode else self.names
                 if lnode.node == "IDENT":
                     var_def = names[lnode.value]
-                    name = "%s.%s" % (names.name, var_def.name) if "ns" in lnode else var_def.name
+                    name = "%s.%s" % (lnode.ns.name, var_def.name) if "ns" in lnode else var_def.name
                     if var_def.type == "BYTE":
                         nodes += [
                             "    // assign to byte ident",
@@ -476,6 +426,9 @@ class Compiler:
     def compile_variable(node):
         assert node.node == "VARIABLE"
 
+        if "addr" in node:
+            return []
+
         if node.type == "BYTE":
             # byte a
             return list(format_data(node.name, node.initializer))
@@ -526,6 +479,12 @@ class Compiler:
             else:
                 ident = self.names[node.value]
                 name = ident.name
+
+            if "addr" in ident:
+                if ident.addr.node == "NUMERIC":
+                    name = ident.addr.value
+                elif ident.addr.node == "IDENT":
+                    name = ident.addr.value
 
             if ident.type == "BYTE":
                 return [
@@ -650,7 +609,7 @@ class Compiler:
 
             if node.type == "BYTE":
                 code += [
-                    "    lda %s.%s" %(name, node.name),
+                    "    lda %s.%s" % (name, node.name),
                     "    pha",
                 ]
             elif node.type == "WORD":
@@ -660,8 +619,8 @@ class Compiler:
                     "    lda %s.%s" %(name, node.name),
                     "    pha",
                 ]
-            elif self.names[node.name].type == "STRING":
-                raise NotImplementedError()
+            elif node.type == "STRING":
+                pass
             else:
                 raise NotImplementedError()
 
@@ -926,10 +885,10 @@ class Compiler:
                 code += self.compile_expr(node.right)
                 code += [
                     "    pla",
-                    "    sta ZP_W0",
+                    "    sta ZP_B0",
                     "    pla",
                     "    clc",
-                    "    adc ZP_W0",
+                    "    adc ZP_B0",
                     "    pha",
                 ]
                 return code

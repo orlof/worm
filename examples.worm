@@ -1,7 +1,4 @@
-import "example2.worm" as example2
+BYTE x[2] AT _x
+DEBUG x[0]
 
-byte a = 0
-
-debug example2.b
-
-
+DATA _x BYTE 0, 1

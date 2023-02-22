@@ -15,6 +15,7 @@ def process_variables(namespace):
 def process_variable(node):
     ast = node.ast
     if ast.node == "=":
+        assert "addr" not in ast, "Cannot define variable with address and initializer: %s" % node.ast.left.value
         left, right = ast.left, ast.right
 
         assert left.node == "IDENT"
@@ -86,9 +87,12 @@ def process_variable(node):
             node.capacity = capacity
             node.initializer = [(0, " " * node.capacity) for _ in range(size)]
 
+            if "addr" in ast:
+                node.addr = ast.addr
+
             del node.ast
 
-        elif node.type == "BYTE":
+        elif node.type in ("BYTE", "WORD"):
             # byte b[5]
             size = right.value
 
@@ -97,6 +101,9 @@ def process_variable(node):
             node.index_type = "BYTE" if node.size <= 255 else "WORD"
             node.capacity = 0
             node.initializer = [0] * size
+
+            if "addr" in ast:
+                node.addr = ast.addr
 
             del node.ast
 
@@ -114,9 +121,12 @@ def process_variable(node):
             node.capacity = capacity
             node.initializer = [(0, " " * node.capacity)]
 
+            if "addr" in ast:
+                node.addr = ast.addr
+
             del node.ast
 
-        elif node.type == "BYTE":
+        elif node.type in ("BYTE", "WORD"):
             # byte b
 
             node.node = "VARIABLE"
@@ -124,6 +134,9 @@ def process_variable(node):
             node.index_type = "BYTE"
             node.capacity = 0
             node.initializer = [0]
+
+            if "addr" in ast:
+                node.addr = ast.addr
 
             del node.ast
 

@@ -1,12 +1,13 @@
-import functools
 from preprocessor import *
-from nodes import *
+
 
 def is_alphanumeric(c):
     return c.isalpha() or c.isdigit() or c in "_"
 
+
 def is_hex_char(c):
     return c in "0123456789abcdefABCDEF"
+
 
 reserved_words = {
     "true", "false",
@@ -18,7 +19,7 @@ reserved_words = {
     "switch", "case",
     "fast", "shared",
     "const", "poke", "peek",
-    "debug", "data", "goto", "origin", "import", "as"
+    "debug", "data", "goto", "origin", "import", "as", "at"
 }
 
 operators_arithmetic = [
@@ -52,7 +53,7 @@ def is_closing(buf):
 
 def is_ident(buf):
     if buf:
-        if buf[0].isalpha():
+        if buf[0].isalpha() or buf[0] == "_":
             if all(map(is_alphanumeric, buf[1:])):
                 return True
     return False
